@@ -16,20 +16,24 @@ description: "A multi-tenant organization management platform built with Spring 
 
 ## What is OrgStack?
 
-OrgStack is a production-ready multi-tenant organization management platform that provides the foundation for building secure, scalable SaaS applications. Built with Spring Boot and Angular, it implements enterprise patterns for tenant isolation, authentication, and authorization out of the box.
+OrgStack is a starter template for building multi-tenant organization management platforms with Spring Boot and Angular. It provides a foundational architecture designed for strict tenant isolation, authentication, and authorization patterns.
+
+<Warning>
+  OrgStack is currently in early development. The architecture and patterns described in this documentation represent the planned implementation. See the [architecture guide](/concepts/architecture) for details on the intended design.
+</Warning>
 
 <CardGroup cols={2}>
-  <Card title="Multi-tenant by design" icon="building">
-    Built from the ground up with strict tenant isolation to ensure data security across organizations.
+  <Card title="Multi-tenant architecture" icon="building">
+    Designed for strict tenant isolation patterns to ensure data security across organizations.
   </Card>
-  <Card title="Enterprise security" icon="shield-halved">
-    JWT-based authentication with Spring Security and role-based access control (RBAC).
+  <Card title="Spring Boot foundation" icon="leaf">
+    Built on Spring Boot 4.0.3 with Spring Security, Spring Data JPA, and PostgreSQL.
   </Card>
   <Card title="Clean architecture" icon="layer-group">
-    Well-structured layered architecture following Spring Boot best practices.
+    Structured for layered architecture following Spring Boot best practices.
   </Card>
-  <Card title="Production ready" icon="rocket">
-    Includes audit logging, timestamping, and Docker Compose configuration for easy deployment.
+  <Card title="Developer starter" icon="code">
+    Includes audit logging foundation with JPA auditing and Docker Compose setup.
   </Card>
 </CardGroup>
 
@@ -47,11 +51,11 @@ OrgStack is a production-ready multi-tenant organization management platform tha
   </Step>
 </Steps>
 
-## Key features
+## Foundation components
 
-### Strict tenant isolation
+### Base entity with audit logging
 
-OrgStack ensures complete data separation between organizations. Every entity is scoped to a tenant, preventing cross-tenant data leaks.
+OrgStack provides a `BaseEntity` class that all domain entities can extend. It includes UUID-based identifiers and automatic timestamp tracking using JPA auditing.
 
 ```java BaseEntity.java
 @MappedSuperclass
@@ -75,15 +79,7 @@ public class BaseEntity {
 }
 ```
 
-### Role-based access control
-
-Fine-grained permissions system that allows you to control what users can do within their organization.
-
-### JWT authentication
-
-Secure, stateless authentication using JSON Web Tokens, integrated with Spring Security.
-
-### Audit logging
+### JPA auditing configuration
 
 Automatic tracking of creation and modification timestamps on all entities using JPA auditing.
 
@@ -117,19 +113,21 @@ public class JpaConfig {
 
 ### Frontend technologies
 
-- **Angular** - Modern TypeScript framework
-- **Spartan NG** - UI component library
-- **TypeScript** - Type-safe development
+The frontend directory is currently a placeholder for planned Angular integration with Spartan NG components.
 
-## Use cases
+## Intended use cases
 
-OrgStack is perfect for building:
+This starter template is designed for building:
 
-- **SaaS platforms** that need multi-tenant support
-- **B2B applications** with organization-based access
-- **Enterprise tools** requiring strict data isolation
+- **Multi-tenant SaaS platforms** that need organization-based isolation
+- **B2B applications** with organization-scoped access
+- **Enterprise tools** requiring strict data separation
 - **Customer portals** with role-based permissions
 - **Team collaboration tools** with audit trails
+
+<Info>
+  The architecture documentation describes the intended patterns for implementing these use cases. The current codebase provides the foundational infrastructure.
+</Info>
 
 ## Next steps
 

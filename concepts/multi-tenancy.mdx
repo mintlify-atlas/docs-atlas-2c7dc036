@@ -1,15 +1,19 @@
 ---
 title: Multi-tenancy
-description: Learn how OrgStack implements multi-tenant architecture with strict tenant isolation
+description: Planned multi-tenant architecture for OrgStack
 ---
+
+<Warning>
+  **Planned architecture**: This page describes the intended multi-tenant design for OrgStack. The current codebase provides foundational components (BaseEntity with UUID identifiers) but does not yet implement tenant isolation features.
+</Warning>
 
 ## Overview
 
-OrgStack is built as a multi-tenant platform where multiple organizations share the same application infrastructure while maintaining complete data isolation. Each organization (tenant) operates independently with its own users, roles, and data.
+OrgStack is designed as a multi-tenant platform where multiple organizations will share the same application infrastructure while maintaining complete data isolation. Each organization (tenant) will operate independently with its own users, roles, and data.
 
-## Multi-tenant architecture
+## Planned multi-tenant architecture
 
-The platform uses a **shared database, shared schema** approach with tenant discrimination at the application layer. This provides cost efficiency while ensuring strict tenant boundaries through code-level isolation.
+The planned architecture will use a **shared database, shared schema** approach with tenant discrimination at the application layer. This will provide cost efficiency while ensuring strict tenant boundaries through code-level isolation.
 
 <Info>
 Every entity in OrgStack includes a tenant identifier to ensure data is properly scoped to the correct organization.

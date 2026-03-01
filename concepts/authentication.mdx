@@ -1,11 +1,15 @@
 ---
 title: Authentication
-description: Learn how OrgStack implements JWT-based authentication with Spring Security
+description: Planned JWT-based authentication with Spring Security
 ---
+
+<Warning>
+  **Planned feature**: This page describes the intended JWT authentication implementation. The current codebase includes Spring Security as a dependency but does not yet implement authentication endpoints or JWT token generation.
+</Warning>
 
 ## Overview
 
-OrgStack uses **JWT (JSON Web Tokens)** for stateless authentication. When you log in, the server issues a signed token containing your identity and organization membership. You include this token in subsequent requests to prove your identity.
+OrgStack will use **JWT (JSON Web Tokens)** for stateless authentication. When users log in, the server will issue a signed token containing their identity and organization membership. Users will include this token in subsequent requests to prove their identity.
 
 ## Authentication flow
 

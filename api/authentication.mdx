@@ -1,11 +1,15 @@
 ---
 title: Authentication
-description: Learn how to authenticate with the OrgStack API using JWT bearer tokens
+description: Planned JWT authentication flow for the OrgStack API
 ---
+
+<Warning>
+  **Planned feature**: The authentication flow described here represents the intended JWT authentication design. This is not yet implemented in the current codebase.
+</Warning>
 
 ## Overview
 
-The OrgStack API uses JSON Web Tokens (JWT) for authentication. To access protected endpoints, you must include a valid JWT token in the `Authorization` header of your requests.
+The planned OrgStack API will use JSON Web Tokens (JWT) for authentication. To access protected endpoints, you will need to include a valid JWT token in the `Authorization` header of your requests.
 
 <Info>
   JWT tokens have an expiration time. When your token expires, you'll need to obtain a new one by logging in again.
