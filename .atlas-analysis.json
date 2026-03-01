@@ -1,0 +1,105 @@
+{
+  "projectType": "saas",
+  "projectName": "OrgStack",
+  "projectDescription": "Multi-tenant organization management platform with strict tenant isolation and role-based authorization.",
+  "theme": "linden",
+  "primaryColor": "#2563eb",
+  "lightColor": "#60a5fa",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/multi-tenancy",
+              "concepts/authentication",
+              "concepts/authorization",
+              "concepts/architecture"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Development",
+            "pages": [
+              "guides/setup",
+              "guides/configuration",
+              "guides/data-model"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "guides/tenant-isolation",
+              "guides/jwt-authentication",
+              "guides/audit-logging"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["api/introduction", "api/authentication"]
+          },
+          {
+            "group": "Endpoints",
+            "pages": ["api/organizations", "api/users", "api/roles"]
+          }
+        ]
+      },
+      {
+        "tab": "Deployment",
+        "groups": [
+          {
+            "group": "Environment Setup",
+            "pages": [
+              "deployment/local-development",
+              "deployment/docker",
+              "deployment/production"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "deployment/database",
+              "deployment/monitoring"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-tenant organization management",
+    "Strict tenant isolation",
+    "Role-based access control (RBAC)",
+    "JWT-based authentication",
+    "Clean layered architecture",
+    "Audit logging and timestamps",
+    "Spring Boot backend with Spring Security",
+    "Angular frontend with Spartan NG"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/login",
+    "POST /api/auth/register",
+    "GET /api/organizations",
+    "POST /api/organizations",
+    "GET /api/users",
+    "POST /api/users",
+    "GET /api/roles",
+    "POST /api/roles"
+  ]
+}
