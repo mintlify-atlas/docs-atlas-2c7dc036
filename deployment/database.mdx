@@ -1,0 +1,492 @@
+---
+title: Database operations
+description: Configure PostgreSQL, manage migrations, and implement backup strategies for OrgStack
+---
+
+OrgStack uses PostgreSQL as its primary database with Spring Data JPA for data access. This guide covers database configuration, schema management, and operational best practices.
+
+## PostgreSQL configuration
+
+The application connects to PostgreSQL using the following configuration from `application.properties`:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/orgstack
+spring.datasource.username=orgstack
+spring.datasource.password=orgstack_dev_password
+```
+
+<Steps>
+  <Step title="Install PostgreSQL">
+    Install PostgreSQL 14 or higher on your server:
+    
+    ```bash
+    # Ubuntu/Debian
+    sudo apt-get update
+    sudo apt-get install postgresql postgresql-contrib
+    
+    # macOS
+    brew install postgresql@14
+    ```
+  </Step>
+  
+  <Step title="Create the database">
+    Create a dedicated database and user for OrgStack:
+    
+    ```sql
+    CREATE DATABASE orgstack;
+    CREATE USER orgstack WITH PASSWORD 'your_secure_password';
+    GRANT ALL PRIVILEGES ON DATABASE orgstack TO orgstack;
+    ```
+    
+    <Warning>
+      Never use the default `orgstack_dev_password` in production. Generate a strong, unique password for each environment.
+    </Warning>
+  </Step>
+  
+  <Step title="Configure connection pooling">
+    For production environments, configure HikariCP connection pool settings in `application.properties`:
+    
+    ```properties
+    spring.datasource.hikari.maximum-pool-size=20
+    spring.datasource.hikari.minimum-idle=5
+    spring.datasource.hikari.connection-timeout=30000
+    spring.datasource.hikari.idle-timeout=600000
+    spring.datasource.hikari.max-lifetime=1800000
+    ```
+  </Step>
+</Steps>
+
+## JPA and Hibernate settings
+
+OrgStack uses conservative JPA settings optimized for production:
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.format_sql=false
+spring.jpa.open-in-view=false
+```
+
+### Key configuration details
+
+<Accordion title="hibernate.ddl-auto=validate">
+  This setting prevents Hibernate from automatically modifying the database schema. When set to `validate`, Hibernate will:
+  
+  - Verify that the database schema matches your entity mappings
+  - Throw an exception if there are mismatches
+  - Never create, update, or drop tables automatically
+  
+  This is the recommended setting for production as it prevents accidental schema modifications.
+</Accordion>
+
+<Accordion title="show-sql=false">
+  SQL logging is disabled to reduce log verbosity in production. Enable this in development environments to debug queries:
+  
+  ```properties
+  spring.jpa.show-sql=true
+  spring.jpa.properties.hibernate.format_sql=true
+  ```
+</Accordion>
+
+<Accordion title="open-in-view=false">
+  The Open Session in View pattern is disabled, which means:
+  
+  - Database sessions are not kept open for the entire HTTP request
+  - Lazy loading only works within the service layer transaction
+  - Better performance and resource management
+  - Prevents common N+1 query problems from being hidden
+  
+  <Info>
+    With this setting, you must eagerly fetch all required data within your service layer transactions. Attempting to access lazy-loaded relationships in controllers or views will throw `LazyInitializationException`.
+  </Info>
+</Accordion>
+
+### Entity auditing
+
+OrgStack enables JPA auditing through `JpaConfig.java` to automatically track creation and modification timestamps:
+
+```java
+@Configuration
+@EnableJpaAuditing
+public class JpaConfig {
+}
+```
+
+All entities extend `BaseEntity`, which provides:
+
+- `id` (UUID): Auto-generated unique identifier
+- `createdAt` (Instant): Automatically set when entity is created
+- `updatedAt` (Instant): Automatically updated on every modification
+
+<Tip>
+  UUIDs are generated in the application layer (not the database) to improve performance and enable optimistic locking strategies.
+</Tip>
+
+## Migration strategy
+
+Since `hibernate.ddl-auto` is set to `validate`, you must manage schema changes explicitly. OrgStack recommends using database migration tools for version-controlled schema management.
+
+### Recommended approach: Flyway or Liquibase
+
+<Steps>
+  <Step title="Add Flyway dependency">
+    Add Flyway to your `pom.xml`:
+    
+    ```xml
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    ```
+  </Step>
+  
+  <Step title="Create migration directory">
+    Create `src/main/resources/db/migration/` and add versioned SQL files:
+    
+    ```
+    db/migration/
+    ├── V1__initial_schema.sql
+    ├── V2__add_organizations_table.sql
+    └── V3__add_user_roles.sql
+    ```
+  </Step>
+  
+  <Step title="Configure Flyway">
+    Add Flyway configuration to `application.properties`:
+    
+    ```properties
+    spring.flyway.enabled=true
+    spring.flyway.baseline-on-migrate=true
+    spring.flyway.locations=classpath:db/migration
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Always test migrations in a staging environment before applying them to production. Create a backup before running any migration.
+</Warning>
+
+### Manual migration process
+
+If you prefer manual migrations:
+
+1. **Generate DDL from entities**: Use Hibernate's schema export tool in development
+2. **Review the generated SQL**: Ensure it matches your intentions
+3. **Create migration script**: Write idempotent SQL that can safely run multiple times
+4. **Test in staging**: Verify the migration works with production-like data
+5. **Apply to production**: Run during maintenance window with proper backups
+
+<Info>
+  When creating new entities or modifying existing ones, run your application with `hibernate.ddl-auto=update` in a development environment to see what schema changes Hibernate would make. Then translate those changes into a migration script.
+</Info>
+
+## Backup and restore
+
+Regular backups are critical for data protection and disaster recovery.
+
+### Backup strategies
+
+<Accordion title="Logical backups with pg_dump">
+  Use `pg_dump` for logical backups that export data as SQL statements:
+  
+  ```bash
+  # Full database backup
+  pg_dump -h localhost -U orgstack -d orgstack -F c -f orgstack_backup_$(date +%Y%m%d_%H%M%S).dump
+  
+  # Compressed backup with custom format
+  pg_dump -h localhost -U orgstack -d orgstack -Fc -f orgstack.dump
+  
+  # Plain SQL format (human-readable)
+  pg_dump -h localhost -U orgstack -d orgstack -f orgstack.sql
+  ```
+  
+  **Advantages:**
+  - Portable across PostgreSQL versions
+  - Can restore individual tables or schemas
+  - Human-readable SQL format available
+  
+  **Disadvantages:**
+  - Slower for large databases
+  - Requires more storage than physical backups
+</Accordion>
+
+<Accordion title="Physical backups with pg_basebackup">
+  Use `pg_basebackup` for physical backups that copy the entire data directory:
+  
+  ```bash
+  # Create base backup
+  pg_basebackup -h localhost -U orgstack -D /backup/orgstack_base -Ft -z -P
+  ```
+  
+  **Advantages:**
+  - Faster for large databases
+  - Smaller backup size
+  - Can be used for point-in-time recovery with WAL archiving
+  
+  **Disadvantages:**
+  - Must restore entire cluster
+  - Less portable across PostgreSQL versions
+</Accordion>
+
+<Accordion title="Continuous archiving with WAL">
+  For point-in-time recovery, enable Write-Ahead Log (WAL) archiving:
+  
+  ```bash
+  # In postgresql.conf
+  wal_level = replica
+  archive_mode = on
+  archive_command = 'cp %p /backup/wal_archive/%f'
+  ```
+  
+  This allows you to restore to any point in time between backups.
+</Accordion>
+
+### Automated backup schedule
+
+Set up automated daily backups using cron:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add daily backup at 2 AM
+0 2 * * * /usr/local/bin/backup_orgstack.sh
+```
+
+**Backup script example** (`/usr/local/bin/backup_orgstack.sh`):
+
+```bash
+#!/bin/bash
+set -e
+
+BACKUP_DIR="/backup/orgstack"
+DATE=$(date +%Y%m%d_%H%M%S)
+RETENTION_DAYS=30
+
+# Create backup directory
+mkdir -p $BACKUP_DIR
+
+# Create backup
+pg_dump -h localhost -U orgstack -d orgstack -Fc -f $BACKUP_DIR/orgstack_$DATE.dump
+
+# Remove backups older than retention period
+find $BACKUP_DIR -name "orgstack_*.dump" -mtime +$RETENTION_DAYS -delete
+
+# Upload to S3 (optional)
+aws s3 cp $BACKUP_DIR/orgstack_$DATE.dump s3://your-backup-bucket/orgstack/
+
+echo "Backup completed: orgstack_$DATE.dump"
+```
+
+<Tip>
+  Store backups in a different location than your database server. Consider using cloud storage (S3, Google Cloud Storage) or a separate backup server.
+</Tip>
+
+### Restore procedures
+
+<Steps>
+  <Step title="Stop the application">
+    Stop OrgStack to prevent write operations during restore:
+    
+    ```bash
+    systemctl stop orgstack
+    ```
+  </Step>
+  
+  <Step title="Drop and recreate database">
+    ```sql
+    DROP DATABASE orgstack;
+    CREATE DATABASE orgstack;
+    GRANT ALL PRIVILEGES ON DATABASE orgstack TO orgstack;
+    ```
+    
+    <Warning>
+      This permanently deletes all data. Ensure you have verified the backup file before proceeding.
+    </Warning>
+  </Step>
+  
+  <Step title="Restore from backup">
+    ```bash
+    # Restore from custom format dump
+    pg_restore -h localhost -U orgstack -d orgstack orgstack.dump
+    
+    # Restore from SQL file
+    psql -h localhost -U orgstack -d orgstack -f orgstack.sql
+    ```
+  </Step>
+  
+  <Step title="Verify data integrity">
+    ```sql
+    -- Check table counts
+    SELECT schemaname, tablename, 
+           pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+    FROM pg_tables 
+    WHERE schemaname = 'public'
+    ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
+    ```
+  </Step>
+  
+  <Step title="Restart the application">
+    ```bash
+    systemctl start orgstack
+    ```
+  </Step>
+</Steps>
+
+## Database credentials management
+
+<Warning>
+  Never commit database credentials to version control. The example credentials in `application.properties` are for development only.
+</Warning>
+
+### Environment-based configuration
+
+Use environment variables for sensitive configuration:
+
+```properties
+spring.datasource.url=${DB_URL:jdbc:postgresql://localhost:5432/orgstack}
+spring.datasource.username=${DB_USERNAME:orgstack}
+spring.datasource.password=${DB_PASSWORD}
+```
+
+Set environment variables on your server:
+
+```bash
+export DB_URL=jdbc:postgresql://prod-db.example.com:5432/orgstack
+export DB_USERNAME=orgstack_prod
+export DB_PASSWORD=your_secure_password
+```
+
+### Using Spring Cloud Config
+
+For centralized configuration management:
+
+<Steps>
+  <Step title="Set up Config Server">
+    Deploy a Spring Cloud Config Server to manage configuration across environments.
+  </Step>
+  
+  <Step title="Store encrypted credentials">
+    Use encrypted properties with `{cipher}` prefix:
+    
+    ```properties
+    spring.datasource.password={cipher}AQA3xYZ...
+    ```
+  </Step>
+  
+  <Step title="Configure the client">
+    Point OrgStack to the Config Server in `bootstrap.properties`:
+    
+    ```properties
+    spring.cloud.config.uri=https://config-server.example.com
+    ```
+  </Step>
+</Steps>
+
+### Using Docker Secrets
+
+If deploying with Docker Swarm:
+
+```yaml
+secrets:
+  db_password:
+    external: true
+
+services:
+  orgstack:
+    image: orgstack:latest
+    secrets:
+      - db_password
+    environment:
+      DB_PASSWORD_FILE: /run/secrets/db_password
+```
+
+### Using Kubernetes Secrets
+
+For Kubernetes deployments:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orgstack-db-credentials
+type: Opaque
+stringData:
+  username: orgstack
+  password: your_secure_password
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orgstack-config
+data:
+  application.properties: |
+    spring.datasource.url=jdbc:postgresql://postgres:5432/orgstack
+    spring.datasource.username=${DB_USERNAME}
+    spring.datasource.password=${DB_PASSWORD}
+```
+
+<Tip>
+  Rotate database passwords regularly and use strong, unique passwords for each environment. Consider using a secrets management system like HashiCorp Vault or AWS Secrets Manager.
+</Tip>
+
+## Performance optimization
+
+### Connection pool tuning
+
+Monitor connection pool usage and adjust based on your workload:
+
+```properties
+# For applications with high concurrency
+spring.datasource.hikari.maximum-pool-size=50
+spring.datasource.hikari.minimum-idle=10
+
+# For applications with low concurrency
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.minimum-idle=2
+```
+
+<Info>
+  A good starting point for `maximum-pool-size` is: (available_connections / number_of_app_instances) - 10% buffer
+</Info>
+
+### PostgreSQL optimization
+
+Key PostgreSQL settings for production:
+
+```conf
+# postgresql.conf
+shared_buffers = 256MB                 # 25% of system RAM
+effective_cache_size = 1GB             # 50-75% of system RAM
+work_mem = 16MB                        # Per-operation memory
+maintenance_work_mem = 128MB           # For VACUUM, CREATE INDEX
+max_connections = 100                  # Align with connection pool
+random_page_cost = 1.1                 # Lower for SSD
+effective_io_concurrency = 200         # Higher for SSD
+```
+
+### Index management
+
+Regularly monitor and maintain indexes:
+
+```sql
+-- Find missing indexes
+SELECT schemaname, tablename, attname, n_distinct, correlation
+FROM pg_stats
+WHERE schemaname = 'public'
+ORDER BY n_distinct DESC;
+
+-- Find unused indexes
+SELECT schemaname, tablename, indexname, idx_scan
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0
+ORDER BY pg_relation_size(indexrelid) DESC;
+```
+
+<Note>
+  OrgStack uses UUID primary keys generated in the application. Consider adding indexes on frequently queried columns like timestamps, foreign keys, and commonly filtered fields.
+</Note>

@@ -1,0 +1,640 @@
+---
+title: JWT authentication
+description: Learn how OrgStack implements JWT-based authentication with Spring Security
+---
+
+OrgStack uses JSON Web Tokens (JWT) for stateless authentication. This guide explains how JWT authentication is implemented with Spring Security and how tokens carry both user identity and tenant context.
+
+## Authentication architecture
+
+OrgStack's authentication flow follows these steps:
+
+<Steps>
+  <Step title="User logs in with credentials">
+    The client sends username and password to the `/auth/login` endpoint:
+
+    ```http
+    POST /api/auth/login
+    Content-Type: application/json
+
+    {
+      "email": "user@example.com",
+      "password": "securePassword123"
+    }
+    ```
+  </Step>
+
+  <Step title="Server validates credentials">
+    Spring Security authenticates the credentials against the user database:
+
+    ```java
+    @Service
+    public class AuthService {
+        private final UserRepository userRepository;
+        private final PasswordEncoder passwordEncoder;
+        private final JwtTokenProvider jwtTokenProvider;
+        
+        public AuthResponse login(LoginRequest request) {
+            User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new BadCredentialsException("Invalid credentials"));
+            
+            if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+                throw new BadCredentialsException("Invalid credentials");
+            }
+            
+            String token = jwtTokenProvider.createToken(user);
+            return new AuthResponse(token, user);
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Server generates JWT token">
+    A JWT token is generated containing the user's ID, email, and tenant ID:
+
+    ```java
+    public String createToken(User user) {
+        Claims claims = Jwts.claims().setSubject(user.getId().toString());
+        claims.put("email", user.getEmail());
+        claims.put("tenantId", user.getTenantId().toString());
+        claims.put("roles", user.getRoles());
+        
+        Date now = new Date();
+        Date validity = new Date(now.getTime() + validityInMilliseconds);
+        
+        return Jwts.builder()
+            .setClaims(claims)
+            .setIssuedAt(now)
+            .setExpiration(validity)
+            .signWith(secretKey, SignatureAlgorithm.HS256)
+            .compact();
+    }
+    ```
+
+    <Info>
+      The tenant ID is embedded in the JWT token, ensuring every request carries the user's organizational context.
+    </Info>
+  </Step>
+
+  <Step title="Client includes token in requests">
+    The client stores the JWT token and includes it in the `Authorization` header for all subsequent requests:
+
+    ```http
+    GET /api/projects
+    Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+    ```
+  </Step>
+
+  <Step title="Server validates token">
+    A JWT filter intercepts requests, validates the token, and sets the security context:
+
+    ```java
+    @Component
+    public class JwtAuthenticationFilter extends OncePerRequestFilter {
+        private final JwtTokenProvider jwtTokenProvider;
+        
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, 
+                                       HttpServletResponse response,
+                                       FilterChain filterChain) {
+            String token = resolveToken(request);
+            
+            if (token != null && jwtTokenProvider.validateToken(token)) {
+                Authentication auth = jwtTokenProvider.getAuthentication(token);
+                SecurityContextHolder.getContext().setAuthentication(auth);
+            }
+            
+            filterChain.doFilter(request, response);
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Spring Security configuration
+
+OrgStack includes `spring-boot-starter-security` in its dependencies:
+
+```xml pom.xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+```
+
+This dependency provides the core Spring Security framework for authentication and authorization.
+
+### Security configuration class
+
+The security configuration defines which endpoints require authentication:
+
+```java
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+public class SecurityConfig {
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session
+                .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/actuator/health").permitAll()
+                .anyRequest().authenticated())
+            .addFilterBefore(jwtAuthenticationFilter, 
+                           UsernamePasswordAuthenticationFilter.class);
+        
+        return http.build();
+    }
+    
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+}
+```
+
+<Note>
+  The configuration disables CSRF protection since JWT tokens are not vulnerable to CSRF attacks. Session management is set to `STATELESS` because JWTs provide authentication state.
+</Note>
+
+## JWT token structure
+
+A JWT token consists of three parts separated by dots:
+
+```
+header.payload.signature
+```
+
+### Header
+
+Specifies the token type and signing algorithm:
+
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+### Payload (Claims)
+
+Contains user information and metadata:
+
+```json
+{
+  "sub": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "email": "user@example.com",
+  "tenantId": "org-uuid-here",
+  "roles": ["USER", "ADMIN"],
+  "iat": 1709251200,
+  "exp": 1709337600
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="sub" icon="user">
+    Subject - The user's UUID identifier
+  </Card>
+  <Card title="email" icon="envelope">
+    User's email address
+  </Card>
+  <Card title="tenantId" icon="building">
+    Organization UUID for multi-tenant isolation
+  </Card>
+  <Card title="roles" icon="shield">
+    User's authorization roles
+  </Card>
+  <Card title="iat" icon="clock">
+    Issued At - Token creation timestamp
+  </Card>
+  <Card title="exp" icon="hourglass">
+    Expiration - Token expiry timestamp
+  </Card>
+</CardGroup>
+
+### Signature
+
+Ensures the token hasn't been tampered with:
+
+```
+HMACSHA256(
+  base64UrlEncode(header) + "." + base64UrlEncode(payload),
+  secret
+)
+```
+
+<Warning>
+  The signing secret must be kept secure and never committed to version control. Use environment variables or a secure secret management system.
+</Warning>
+
+## Implementing JWT token provider
+
+### Token generation
+
+Create tokens with user claims and expiration:
+
+```java
+@Component
+public class JwtTokenProvider {
+    @Value("${jwt.secret}")
+    private String secretKey;
+    
+    @Value("${jwt.expiration:3600000}") // 1 hour default
+    private long validityInMilliseconds;
+    
+    public String createToken(User user) {
+        Claims claims = Jwts.claims().setSubject(user.getId().toString());
+        claims.put("email", user.getEmail());
+        claims.put("tenantId", user.getTenantId().toString());
+        claims.put("roles", user.getRoles().stream()
+            .map(Role::getName)
+            .collect(Collectors.toList()));
+        
+        Date now = new Date();
+        Date validity = new Date(now.getTime() + validityInMilliseconds);
+        
+        return Jwts.builder()
+            .setClaims(claims)
+            .setIssuedAt(now)
+            .setExpiration(validity)
+            .signWith(Keys.hmacShaKeyFor(secretKey.getBytes()), 
+                     SignatureAlgorithm.HS256)
+            .compact();
+    }
+}
+```
+
+### Token validation
+
+Validate tokens and extract claims:
+
+```java
+public boolean validateToken(String token) {
+    try {
+        Jws<Claims> claims = Jwts.parserBuilder()
+            .setSigningKey(Keys.hmacShaKeyFor(secretKey.getBytes()))
+            .build()
+            .parseClaimsJws(token);
+        
+        return !claims.getBody().getExpiration().before(new Date());
+    } catch (JwtException | IllegalArgumentException e) {
+        return false;
+    }
+}
+
+public Claims getClaims(String token) {
+    return Jwts.parserBuilder()
+        .setSigningKey(Keys.hmacShaKeyFor(secretKey.getBytes()))
+        .build()
+        .parseClaimsJws(token)
+        .getBody();
+}
+```
+
+### Authentication object
+
+Convert JWT claims to Spring Security authentication:
+
+```java
+public Authentication getAuthentication(String token) {
+    Claims claims = getClaims(token);
+    
+    UUID userId = UUID.fromString(claims.getSubject());
+    String email = claims.get("email", String.class);
+    UUID tenantId = UUID.fromString(claims.get("tenantId", String.class));
+    List<String> roles = claims.get("roles", List.class);
+    
+    UserPrincipal principal = new UserPrincipal(
+        userId, 
+        email, 
+        tenantId, 
+        roles.stream()
+            .map(SimpleGrantedAuthority::new)
+            .collect(Collectors.toList())
+    );
+    
+    return new UsernamePasswordAuthenticationToken(
+        principal, 
+        token, 
+        principal.getAuthorities()
+    );
+}
+```
+
+## User principal
+
+The `UserPrincipal` class represents the authenticated user:
+
+```java
+@Getter
+public class UserPrincipal implements UserDetails {
+    private final UUID id;
+    private final String email;
+    private final UUID tenantId;
+    private final Collection<? extends GrantedAuthority> authorities;
+    
+    @Override
+    public String getUsername() {
+        return email;
+    }
+    
+    @Override
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+    
+    @Override
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+    
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+    
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
+    
+    @Override
+    public String getPassword() {
+        return null; // JWT authentication doesn't use password
+    }
+}
+```
+
+<Info>
+  The `UserPrincipal` includes the `tenantId`, making it available throughout the request lifecycle for tenant isolation.
+</Info>
+
+## Accessing the authenticated user
+
+### In controllers
+
+Use `@AuthenticationPrincipal` to inject the current user:
+
+```java
+@RestController
+@RequestMapping("/api/profile")
+public class ProfileController {
+    @GetMapping
+    public UserProfile getProfile(@AuthenticationPrincipal UserPrincipal principal) {
+        return userService.getProfile(principal.getId());
+    }
+}
+```
+
+### In services
+
+Access via `SecurityContextHolder`:
+
+```java
+@Service
+public class ProjectService {
+    public List<Project> getProjects() {
+        UserPrincipal principal = (UserPrincipal) SecurityContextHolder
+            .getContext()
+            .getAuthentication()
+            .getPrincipal();
+        
+        UUID tenantId = principal.getTenantId();
+        return projectRepository.findByTenantId(tenantId);
+    }
+}
+```
+
+### Tenant context utility
+
+Create a helper to extract tenant ID:
+
+```java
+public class TenantContext {
+    public static UUID getCurrentTenantId() {
+        Authentication auth = SecurityContextHolder.getContext()
+            .getAuthentication();
+        
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new SecurityException("No authenticated user");
+        }
+        
+        UserPrincipal principal = (UserPrincipal) auth.getPrincipal();
+        return principal.getTenantId();
+    }
+    
+    public static UUID getCurrentUserId() {
+        Authentication auth = SecurityContextHolder.getContext()
+            .getAuthentication();
+        
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new SecurityException("No authenticated user");
+        }
+        
+        UserPrincipal principal = (UserPrincipal) auth.getPrincipal();
+        return principal.getId();
+    }
+}
+```
+
+## Password security
+
+OrgStack uses BCrypt for password hashing:
+
+```java
+@Bean
+public PasswordEncoder passwordEncoder() {
+    return new BCryptPasswordEncoder();
+}
+```
+
+### Hashing passwords on registration
+
+```java
+@Service
+public class UserService {
+    private final PasswordEncoder passwordEncoder;
+    private final UserRepository userRepository;
+    
+    public User registerUser(RegisterRequest request) {
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new DuplicateEmailException("Email already registered");
+        }
+        
+        User user = new User();
+        user.setEmail(request.getEmail());
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setTenantId(request.getTenantId());
+        
+        return userRepository.save(user);
+    }
+}
+```
+
+<Tip>
+  BCrypt automatically includes salt and uses multiple hashing rounds, making it resistant to rainbow table and brute-force attacks.
+</Tip>
+
+## Token refresh strategy
+
+### Short-lived access tokens
+
+Access tokens should expire quickly (e.g., 1 hour):
+
+```properties
+jwt.expiration=3600000  # 1 hour in milliseconds
+```
+
+### Refresh tokens
+
+Implement refresh tokens for seamless re-authentication:
+
+```java
+public class AuthResponse {
+    private String accessToken;
+    private String refreshToken;
+    private long expiresIn;
+    
+    // Constructor, getters, setters
+}
+
+public AuthResponse login(LoginRequest request) {
+    User user = authenticateUser(request);
+    
+    String accessToken = jwtTokenProvider.createToken(user);
+    String refreshToken = jwtTokenProvider.createRefreshToken(user);
+    
+    return new AuthResponse(accessToken, refreshToken, 3600);
+}
+
+public AuthResponse refreshToken(String refreshToken) {
+    if (!jwtTokenProvider.validateToken(refreshToken)) {
+        throw new InvalidTokenException("Invalid refresh token");
+    }
+    
+    Claims claims = jwtTokenProvider.getClaims(refreshToken);
+    UUID userId = UUID.fromString(claims.getSubject());
+    
+    User user = userRepository.findById(userId)
+        .orElseThrow(() -> new UserNotFoundException("User not found"));
+    
+    String newAccessToken = jwtTokenProvider.createToken(user);
+    return new AuthResponse(newAccessToken, refreshToken, 3600);
+}
+```
+
+## Security best practices
+
+<AccordionGroup>
+  <Accordion title="Use strong signing secrets">
+    Generate a secure random secret for JWT signing:
+    
+    ```bash
+    openssl rand -base64 64
+    ```
+    
+    Store it securely in environment variables:
+    
+    ```properties
+    jwt.secret=${JWT_SECRET}
+    ```
+    
+    <Warning>
+      Never hardcode secrets or commit them to version control.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Set appropriate token expiration">
+    Balance security and user experience:
+    
+    - **Access tokens**: 15 minutes to 1 hour
+    - **Refresh tokens**: 7-30 days
+    
+    Shorter expiration reduces the window of vulnerability if a token is compromised.
+  </Accordion>
+  
+  <Accordion title="Validate all token claims">
+    Check expiration, issuer, and audience:
+    
+    ```java
+    public boolean validateToken(String token) {
+        try {
+            Jws<Claims> claims = Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .requireIssuer("orgstack")
+                .build()
+                .parseClaimsJws(token);
+            
+            return !claims.getBody().getExpiration().before(new Date());
+        } catch (JwtException e) {
+            return false;
+        }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Use HTTPS in production">
+    Always transmit JWT tokens over HTTPS to prevent interception:
+    
+    ```properties
+    server.ssl.enabled=true
+    server.ssl.key-store=classpath:keystore.p12
+    server.ssl.key-store-password=${SSL_PASSWORD}
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Testing authentication
+
+### Mock authenticated users in tests
+
+```java
+@SpringBootTest
+class ProjectServiceTest {
+    @Autowired
+    private ProjectService projectService;
+    
+    @Test
+    @WithMockUser(username = "user@example.com")
+    void testGetProjects() {
+        mockSecurityContext();
+        
+        List<Project> projects = projectService.getProjects();
+        
+        assertNotNull(projects);
+    }
+    
+    private void mockSecurityContext() {
+        UUID tenantId = UUID.randomUUID();
+        UserPrincipal principal = new UserPrincipal(
+            UUID.randomUUID(),
+            "user@example.com",
+            tenantId,
+            List.of(new SimpleGrantedAuthority("ROLE_USER"))
+        );
+        
+        Authentication auth = new UsernamePasswordAuthenticationToken(
+            principal, null, principal.getAuthorities()
+        );
+        
+        SecurityContextHolder.getContext().setAuthentication(auth);
+    }
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Tenant isolation" href="/guides/tenant-isolation" icon="building">
+    Learn how JWT tokens enable multi-tenant data isolation
+  </Card>
+  
+  <Card title="Audit logging" href="/guides/audit-logging" icon="clock">
+    Track entity changes with JPA auditing
+  </Card>
+</CardGroup>

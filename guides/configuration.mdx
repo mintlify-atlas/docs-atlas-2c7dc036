@@ -1,0 +1,296 @@
+---
+title: Configuration guide
+description: Configure your OrgStack application with database connections, server settings, and JPA properties
+---
+
+OrgStack uses Spring Boot's standard configuration approach with `application.properties` for environment-specific settings. This guide covers all configuration options available in the application.
+
+## Configuration file location
+
+The main configuration file is located at:
+
+```
+backend/src/main/resources/application.properties
+```
+
+## Application configuration
+
+### Application name
+
+The application is identified by its Spring application name:
+
+```properties application.properties
+spring.application.name=backend
+```
+
+This name is used for logging, monitoring, and service identification.
+
+## Database configuration
+
+OrgStack uses PostgreSQL as its primary database. All database settings are configured under the `spring.datasource` namespace.
+
+### Connection settings
+
+<ParamField path="spring.datasource.url" type="string" required>
+  JDBC connection URL for the PostgreSQL database.
+
+  ```properties
+  spring.datasource.url=jdbc:postgresql://localhost:5432/orgstack
+  ```
+
+  **Format:** `jdbc:postgresql://<host>:<port>/<database>`
+
+  <Info>
+    The default configuration connects to a local PostgreSQL instance on port 5432 with database name `orgstack`, matching the Docker Compose setup.
+  </Info>
+</ParamField>
+
+<ParamField path="spring.datasource.username" type="string" required>
+  Database username for authentication.
+
+  ```properties
+  spring.datasource.username=orgstack
+  ```
+</ParamField>
+
+<ParamField path="spring.datasource.password" type="string" required>
+  Database password for authentication.
+
+  ```properties
+  spring.datasource.password=orgstack_dev_password
+  ```
+
+  <Warning>
+    This is a development password. In production, use environment variables or a secrets management system instead of hardcoding passwords.
+  </Warning>
+</ParamField>
+
+### Complete datasource configuration
+
+```properties application.properties
+# --- Datasource --- 
+spring.datasource.url=jdbc:postgresql://localhost:5432/orgstack
+spring.datasource.username=orgstack
+spring.datasource.password=orgstack_dev_password
+```
+
+## JPA and Hibernate configuration
+
+OrgStack uses Spring Data JPA with Hibernate as the JPA implementation. These settings control how JPA interacts with the database.
+
+### Schema management
+
+<ParamField path="spring.jpa.hibernate.ddl-auto" type="string" default="validate">
+  Controls how Hibernate manages the database schema.
+
+  ```properties
+  spring.jpa.hibernate.ddl-auto=validate
+  ```
+
+  **Possible values:**
+  - `validate` - Validates the schema without making changes (recommended for production)
+  - `update` - Updates the schema automatically (use with caution)
+  - `create` - Creates the schema, destroying previous data
+  - `create-drop` - Creates schema on startup, drops on shutdown
+  - `none` - No schema management
+
+  <Info>
+    OrgStack uses `validate` to ensure database schema matches entity definitions without automatic modifications. Schema changes should be managed through migrations.
+  </Info>
+</ParamField>
+
+### SQL logging
+
+<ParamField path="spring.jpa.show-sql" type="boolean" default="false">
+  Controls whether SQL statements are logged to the console.
+
+  ```properties
+  spring.jpa.show-sql=false
+  ```
+
+  Set to `true` during development to see generated SQL queries.
+</ParamField>
+
+<ParamField path="spring.jpa.properties.hibernate.format_sql" type="boolean" default="false">
+  Formats SQL output for better readability when `show-sql` is enabled.
+
+  ```properties
+  spring.jpa.properties.hibernate.format_sql=false
+  ```
+</ParamField>
+
+### Open Session in View
+
+<ParamField path="spring.jpa.open-in-view" type="boolean" default="false">
+  Controls the Open Session in View (OSIV) pattern.
+
+  ```properties
+  spring.jpa.open-in-view=false
+  ```
+
+  <Note>
+    OSIV is disabled (`false`) in OrgStack to prevent lazy loading issues and encourage explicit transaction boundaries. This follows best practices for clean layered architecture.
+  </Note>
+</ParamField>
+
+### Complete JPA configuration
+
+```properties application.properties
+# --- JPA ---
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.format_sql=false
+spring.jpa.open-in-view=false
+```
+
+## Server configuration
+
+<ParamField path="server.port" type="integer" default="8080">
+  The HTTP port the Spring Boot application listens on.
+
+  ```properties
+  server.port=8080
+  ```
+
+  The backend API will be accessible at `http://localhost:8080`.
+</ParamField>
+
+## Environment-specific configuration
+
+For different environments (development, staging, production), you can create environment-specific property files:
+
+<CodeGroup>
+```properties application-dev.properties
+# Development settings
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+logging.level.com.orgstack=DEBUG
+```
+
+```properties application-prod.properties
+# Production settings
+spring.datasource.url=${DATABASE_URL}
+spring.datasource.username=${DATABASE_USER}
+spring.datasource.password=${DATABASE_PASSWORD}
+spring.jpa.show-sql=false
+logging.level.com.orgstack=INFO
+```
+</CodeGroup>
+
+Activate a profile using:
+
+```bash
+# Via command line
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
+
+# Via environment variable
+export SPRING_PROFILES_ACTIVE=prod
+```
+
+## Using environment variables
+
+For sensitive configuration like database passwords, use environment variables:
+
+```properties
+spring.datasource.url=${DATABASE_URL:jdbc:postgresql://localhost:5432/orgstack}
+spring.datasource.username=${DATABASE_USER:orgstack}
+spring.datasource.password=${DATABASE_PASSWORD:orgstack_dev_password}
+```
+
+The syntax `${VAR_NAME:default_value}` uses the environment variable if set, otherwise falls back to the default.
+
+<Steps>
+  <Step title="Create a .env file (optional)">
+    ```bash .env
+    DATABASE_URL=jdbc:postgresql://localhost:5432/orgstack
+    DATABASE_USER=orgstack
+    DATABASE_PASSWORD=your_secure_password
+    ```
+  </Step>
+
+  <Step title="Load variables before running">
+    ```bash
+    export $(cat .env | xargs)
+    mvn spring-boot:run
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Never commit `.env` files or files containing secrets to version control. Add them to `.gitignore`.
+</Warning>
+
+## Configuration validation
+
+To verify your configuration is correct:
+
+<Steps>
+  <Step title="Check database connectivity">
+    ```bash
+    # Test PostgreSQL connection
+    docker exec -it orgstack-postgres psql -U orgstack -d orgstack -c "SELECT version();"
+    ```
+  </Step>
+
+  <Step title="Start the application">
+    ```bash
+    mvn spring-boot:run
+    ```
+
+    Watch for any configuration errors in the startup logs.
+  </Step>
+
+  <Step title="Verify health endpoint">
+    ```bash
+    curl http://localhost:8080/actuator/health
+    ```
+
+    Should return:
+    ```json
+    {"status":"UP"}
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database connection refused">
+    **Symptoms:** `Connection refused` or `Could not connect to database`
+
+    **Solutions:**
+    - Verify PostgreSQL is running: `docker ps`
+    - Check database URL matches your setup
+    - Ensure port 5432 is not blocked by firewall
+    - Verify credentials match between `application.properties` and `docker-compose.yml`
+  </Accordion>
+
+  <Accordion title="Schema validation errors">
+    **Symptoms:** `Schema-validation: wrong column type encountered`
+
+    **Solutions:**
+    - Ensure database schema matches entity definitions
+    - Run database migrations if needed
+    - Temporarily use `spring.jpa.hibernate.ddl-auto=update` to sync schema (development only)
+  </Accordion>
+
+  <Accordion title="Port already in use">
+    **Symptoms:** `Port 8080 already in use`
+
+    **Solutions:**
+    - Change `server.port` in `application.properties`
+    - Stop the conflicting application
+    - Find and kill the process: `lsof -i :8080`
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Data model" icon="database" href="/guides/data-model">
+    Learn about the entity structure and BaseEntity pattern
+  </Card>
+  <Card title="Development setup" icon="code" href="/guides/setup">
+    Set up your complete development environment
+  </Card>
+</CardGroup>

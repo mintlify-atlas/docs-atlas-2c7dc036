@@ -1,0 +1,624 @@
+---
+title: Monitoring and observability
+description: Configure Spring Boot Actuator for health checks, metrics, and production monitoring
+---
+
+OrgStack includes Spring Boot Actuator for comprehensive monitoring and observability. This guide covers setting up health checks, metrics collection, and production monitoring.
+
+## Spring Boot Actuator
+
+Spring Boot Actuator is included in the application's dependencies:
+
+```xml
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
+
+Actuator provides production-ready features including:
+
+- Health check endpoints
+- Application metrics
+- HTTP request tracing
+- JVM and system metrics
+- Custom application-specific metrics
+
+## Health check endpoints
+
+Actuator exposes health information through HTTP endpoints that you can use for load balancer checks, container orchestration, and monitoring systems.
+
+### Basic configuration
+
+Add these settings to `application.properties`:
+
+```properties
+# Enable health endpoint
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+management.endpoint.health.show-details=when-authorized
+management.endpoint.health.probes.enabled=true
+
+# Customize management port (optional - use different port than main app)
+management.server.port=8081
+```
+
+<Info>
+  Using a separate management port (`8081`) allows you to expose health checks to internal networks while keeping the main application (`8080`) behind a firewall.
+</Info>
+
+### Available health endpoints
+
+<Accordion title="/actuator/health - Overall health status">
+  Returns aggregated health status of all components:
+  
+  ```bash
+  curl http://localhost:8080/actuator/health
+  ```
+  
+  **Response:**
+  ```json
+  {
+    "status": "UP",
+    "components": {
+      "db": {
+        "status": "UP",
+        "details": {
+          "database": "PostgreSQL",
+          "validationQuery": "isValid()"
+        }
+      },
+      "diskSpace": {
+        "status": "UP",
+        "details": {
+          "total": 499963174912,
+          "free": 336889606144,
+          "threshold": 10485760,
+          "exists": true
+        }
+      },
+      "ping": {
+        "status": "UP"
+      }
+    }
+  }
+  ```
+  
+  **Status codes:**
+  - `200 OK` when status is `UP`
+  - `503 Service Unavailable` when status is `DOWN` or `OUT_OF_SERVICE`
+</Accordion>
+
+<Accordion title="/actuator/health/liveness - Kubernetes liveness probe">
+  Indicates whether the application is running and should be restarted if unhealthy:
+  
+  ```bash
+  curl http://localhost:8080/actuator/health/liveness
+  ```
+  
+  **Response:**
+  ```json
+  {
+    "status": "UP"
+  }
+  ```
+  
+  Use this for Kubernetes `livenessProbe` configuration.
+</Accordion>
+
+<Accordion title="/actuator/health/readiness - Kubernetes readiness probe">
+  Indicates whether the application is ready to accept traffic:
+  
+  ```bash
+  curl http://localhost:8080/actuator/health/readiness
+  ```
+  
+  **Response:**
+  ```json
+  {
+    "status": "UP"
+  }
+  ```
+  
+  Use this for Kubernetes `readinessProbe` configuration. The application is marked as not ready if:
+  - Database connection is unavailable
+  - Required external services are down
+  - Application is shutting down
+</Accordion>
+
+### Load balancer health checks
+
+Configure your load balancer to use the health endpoint:
+
+<Steps>
+  <Step title="Choose the health endpoint">
+    Use `/actuator/health` for general health or `/actuator/health/readiness` for more accurate traffic routing.
+  </Step>
+  
+  <Step title="Configure check interval">
+    Set appropriate intervals to balance responsiveness and overhead:
+    
+    - **Interval**: 10-30 seconds
+    - **Timeout**: 5 seconds
+    - **Unhealthy threshold**: 2-3 consecutive failures
+    - **Healthy threshold**: 2 consecutive successes
+  </Step>
+  
+  <Step title="Set up monitoring alerts">
+    Alert when instances fail health checks:
+    
+    ```bash
+    # Example: monitor with curl
+    if ! curl -f http://localhost:8080/actuator/health > /dev/null 2>&1; then
+      echo "Health check failed" | mail -s "OrgStack Alert" ops@example.com
+    fi
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Never expose `/actuator/health` with `show-details=always` in production without authentication. Health details can reveal sensitive information about your infrastructure.
+</Warning>
+
+### Kubernetes deployment configuration
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orgstack
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: orgstack
+        image: orgstack:latest
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+```
+
+<Tip>
+  Set `initialDelaySeconds` to account for your application's startup time. OrgStack typically starts in 20-40 seconds depending on database migrations.
+</Tip>
+
+## Metrics and observability
+
+Actuator collects comprehensive metrics about your application's performance and resource usage.
+
+### Enable metrics endpoints
+
+Add to `application.properties`:
+
+```properties
+# Expose metrics endpoint
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+
+# Enable detailed metrics
+management.metrics.enable.jvm=true
+management.metrics.enable.process=true
+management.metrics.enable.system=true
+management.metrics.enable.http=true
+
+# Customize metrics export
+management.metrics.distribution.percentiles-histogram.http.server.requests=true
+```
+
+### Available metrics
+
+<Accordion title="JVM metrics">
+  Monitor Java Virtual Machine performance:
+  
+  ```bash
+  # Memory usage
+  curl http://localhost:8080/actuator/metrics/jvm.memory.used
+  curl http://localhost:8080/actuator/metrics/jvm.memory.max
+  
+  # Garbage collection
+  curl http://localhost:8080/actuator/metrics/jvm.gc.pause
+  curl http://localhost:8080/actuator/metrics/jvm.gc.memory.allocated
+  
+  # Thread count
+  curl http://localhost:8080/actuator/metrics/jvm.threads.live
+  curl http://localhost:8080/actuator/metrics/jvm.threads.daemon
+  ```
+  
+  **Key metrics to monitor:**
+  - `jvm.memory.used`: Current memory usage
+  - `jvm.memory.max`: Maximum available memory
+  - `jvm.gc.pause`: GC pause duration (should be < 100ms)
+  - `jvm.threads.live`: Active thread count
+</Accordion>
+
+<Accordion title="HTTP request metrics">
+  Track request throughput and latency:
+  
+  ```bash
+  # Request count and timing
+  curl http://localhost:8080/actuator/metrics/http.server.requests
+  ```
+  
+  **Response:**
+  ```json
+  {
+    "name": "http.server.requests",
+    "measurements": [
+      { "statistic": "COUNT", "value": 1523 },
+      { "statistic": "TOTAL_TIME", "value": 42.5 },
+      { "statistic": "MAX", "value": 0.243 }
+    ],
+    "availableTags": [
+      { "tag": "method", "values": ["GET", "POST", "PUT", "DELETE"] },
+      { "tag": "status", "values": ["200", "404", "500"] },
+      { "tag": "uri", "values": ["/api/organizations", "/api/users"] }
+    ]
+  }
+  ```
+  
+  Filter by tag:
+  ```bash
+  curl "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/api/organizations&tag=method:GET"
+  ```
+</Accordion>
+
+<Accordion title="Database connection pool metrics">
+  Monitor HikariCP connection pool health:
+  
+  ```bash
+  # Active connections
+  curl http://localhost:8080/actuator/metrics/hikaricp.connections.active
+  
+  # Idle connections
+  curl http://localhost:8080/actuator/metrics/hikaricp.connections.idle
+  
+  # Connection wait time
+  curl http://localhost:8080/actuator/metrics/hikaricp.connections.acquire
+  
+  # Connection timeout count
+  curl http://localhost:8080/actuator/metrics/hikaricp.connections.timeout
+  ```
+  
+  <Warning>
+    If `hikaricp.connections.timeout` is increasing, you may need to increase the connection pool size or optimize slow queries.
+  </Warning>
+</Accordion>
+
+<Accordion title="System metrics">
+  Monitor underlying system resources:
+  
+  ```bash
+  # CPU usage
+  curl http://localhost:8080/actuator/metrics/system.cpu.usage
+  curl http://localhost:8080/actuator/metrics/process.cpu.usage
+  
+  # Disk space
+  curl http://localhost:8080/actuator/metrics/disk.free
+  curl http://localhost:8080/actuator/metrics/disk.total
+  
+  # File descriptors
+  curl http://localhost:8080/actuator/metrics/process.files.open
+  curl http://localhost:8080/actuator/metrics/process.files.max
+  ```
+</Accordion>
+
+### Custom application metrics
+
+You can add custom metrics to track business-specific operations:
+
+```java
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Counter;
+import org.springframework.stereotype.Service;
+
+@Service
+public class OrganizationService {
+    private final Counter organizationCreatedCounter;
+    
+    public OrganizationService(MeterRegistry registry) {
+        this.organizationCreatedCounter = Counter
+            .builder("organizations.created")
+            .description("Number of organizations created")
+            .tag("type", "business")
+            .register(registry);
+    }
+    
+    public void createOrganization(Organization org) {
+        // ... business logic ...
+        organizationCreatedCounter.increment();
+    }
+}
+```
+
+Access custom metrics:
+
+```bash
+curl http://localhost:8080/actuator/metrics/organizations.created
+```
+
+## Production monitoring setup
+
+Integrate OrgStack with popular monitoring platforms for comprehensive observability.
+
+### Prometheus integration
+
+Prometheus is a popular open-source monitoring system that works seamlessly with Actuator.
+
+<Steps>
+  <Step title="Add Micrometer Prometheus dependency">
+    Update `pom.xml`:
+    
+    ```xml
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    ```
+  </Step>
+  
+  <Step title="Enable Prometheus endpoint">
+    Add to `application.properties`:
+    
+    ```properties
+    management.endpoints.web.exposure.include=health,info,metrics,prometheus
+    management.metrics.export.prometheus.enabled=true
+    ```
+  </Step>
+  
+  <Step title="Verify Prometheus metrics">
+    ```bash
+    curl http://localhost:8080/actuator/prometheus
+    ```
+    
+    This returns metrics in Prometheus format:
+    ```
+    # HELP jvm_memory_used_bytes The amount of used memory
+    # TYPE jvm_memory_used_bytes gauge
+    jvm_memory_used_bytes{area="heap",id="G1 Eden Space",} 1.2345678E7
+    ```
+  </Step>
+  
+  <Step title="Configure Prometheus scraping">
+    Add to `prometheus.yml`:
+    
+    ```yaml
+    scrape_configs:
+      - job_name: 'orgstack'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets: ['localhost:8080']
+        scrape_interval: 15s
+    ```
+  </Step>
+</Steps>
+
+### Grafana dashboards
+
+Visualize metrics with Grafana:
+
+<Steps>
+  <Step title="Add Prometheus as data source">
+    In Grafana, navigate to Configuration > Data Sources > Add data source > Prometheus
+  </Step>
+  
+  <Step title="Import Spring Boot dashboard">
+    Use the community dashboard for Spring Boot 2.x:
+    
+    - Dashboard ID: `11378` (JVM Micrometer)
+    - Dashboard ID: `12900` (Spring Boot 2.x Statistics)
+  </Step>
+  
+  <Step title="Create custom panels">
+    Add panels for OrgStack-specific metrics:
+    
+    - Organization creation rate
+    - User registration trends
+    - API endpoint latency percentiles
+    - Database query performance
+  </Step>
+</Steps>
+
+<Info>
+  Grafana provides alerting capabilities. Set up alerts for critical metrics like high memory usage, slow response times, or database connection pool exhaustion.
+</Info>
+
+### Application Performance Monitoring (APM)
+
+Integrate with APM solutions for distributed tracing and deep performance insights.
+
+<Accordion title="Elastic APM">
+  Add the Elastic APM Java agent:
+  
+  ```bash
+  java -javaagent:/path/to/elastic-apm-agent.jar \
+       -Delastic.apm.service_name=orgstack \
+       -Delastic.apm.server_urls=http://localhost:8200 \
+       -Delastic.apm.application_packages=com.orgstack \
+       -jar orgstack.jar
+  ```
+  
+  Or use Spring Boot integration:
+  
+  ```xml
+  <dependency>
+    <groupId>co.elastic.apm</groupId>
+    <artifactId>apm-agent-attach</artifactId>
+    <version>1.39.0</version>
+  </dependency>
+  ```
+</Accordion>
+
+<Accordion title="Datadog">
+  Add Datadog Java tracer:
+  
+  ```bash
+  java -javaagent:/path/to/dd-java-agent.jar \
+       -Ddd.service=orgstack \
+       -Ddd.env=production \
+       -Ddd.trace.analytics.enabled=true \
+       -jar orgstack.jar
+  ```
+  
+  Configure in `application.properties`:
+  
+  ```properties
+  management.metrics.export.datadog.enabled=true
+  management.metrics.export.datadog.api-key=${DD_API_KEY}
+  management.metrics.export.datadog.application-key=${DD_APP_KEY}
+  management.metrics.export.datadog.step=1m
+  ```
+</Accordion>
+
+<Accordion title="New Relic">
+  Add New Relic Java agent:
+  
+  ```bash
+  java -javaagent:/path/to/newrelic.jar \
+       -jar orgstack.jar
+  ```
+  
+  Configure in `newrelic.yml`:
+  
+  ```yaml
+  common: &default_settings
+    license_key: 'YOUR_LICENSE_KEY'
+    app_name: 'OrgStack'
+    
+  production:
+    <<: *default_settings
+  ```
+</Accordion>
+
+### Logging integration
+
+Configure structured logging for better observability:
+
+```properties
+# Use JSON format for logs
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} - %msg%n
+logging.level.root=INFO
+logging.level.com.orgstack=DEBUG
+logging.level.org.springframework.web=INFO
+logging.level.org.hibernate.SQL=DEBUG
+logging.level.org.hibernate.type.descriptor.sql.BasicBinder=TRACE
+
+# Log to file
+logging.file.name=/var/log/orgstack/application.log
+logging.file.max-size=10MB
+logging.file.max-history=30
+```
+
+<Tip>
+  Use a log aggregation system like ELK Stack (Elasticsearch, Logstash, Kibana) or Splunk to centralize logs from multiple instances.
+</Tip>
+
+## Security considerations
+
+<Warning>
+  Actuator endpoints can expose sensitive information. Always secure them in production environments.
+</Warning>
+
+### Restrict endpoint access
+
+Configure Spring Security to protect management endpoints:
+
+```java
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.web.SecurityFilterChain;
+
+@Configuration
+public class ActuatorSecurityConfig {
+    
+    @Bean
+    public SecurityFilterChain actuatorSecurityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .securityMatcher("/actuator/**")
+            .authorizeHttpRequests(authorize -> authorize
+                .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/actuator/health/liveness").permitAll()
+                .requestMatchers("/actuator/health/readiness").permitAll()
+                .requestMatchers("/actuator/**").hasRole("ACTUATOR_ADMIN")
+            )
+            .httpBasic();
+        return http.build();
+    }
+}
+```
+
+### Use separate management port
+
+Isolate management endpoints on a different port:
+
+```properties
+# Main application port (public)
+server.port=8080
+
+# Management port (internal only)
+management.server.port=8081
+management.server.address=127.0.0.1
+```
+
+Then configure your firewall to only allow internal access to port `8081`.
+
+### Disable sensitive endpoints
+
+Disable endpoints you don't need:
+
+```properties
+# Only expose specific endpoints
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+management.endpoints.web.exposure.exclude=env,beans,configprops
+
+# Disable specific endpoints
+management.endpoint.shutdown.enabled=false
+management.endpoint.env.enabled=false
+```
+
+<Note>
+  The `shutdown` endpoint allows remote application shutdown via HTTP POST. It is disabled by default, but ensure it stays disabled in production.
+</Note>
+
+## Alerting recommendations
+
+Set up alerts for critical metrics:
+
+### High priority alerts
+
+- **Application down**: Health check returns non-200 status
+- **High error rate**: 5xx responses > 5% of total requests
+- **Database unavailable**: Database health check fails
+- **High memory usage**: JVM heap usage > 85%
+- **Connection pool exhausted**: Active connections / max connections > 90%
+
+### Medium priority alerts
+
+- **Slow response times**: P95 latency > 2 seconds
+- **High GC frequency**: GC pauses > 100ms
+- **Disk space low**: Free disk space < 10%
+- **High thread count**: Active threads > 200
+
+### Low priority alerts
+
+- **Increased traffic**: Request rate increases > 50% compared to baseline
+- **Database slow queries**: Query execution time > 5 seconds
+- **Memory usage trending up**: Steady increase over 6 hours
+
+<Tip>
+  Start with conservative thresholds and adjust based on your actual usage patterns. Use percentile-based alerts (P95, P99) rather than averages for latency metrics.
+</Tip>

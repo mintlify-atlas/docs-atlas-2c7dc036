@@ -1,0 +1,376 @@
+---
+title: Tenant isolation
+description: Learn how OrgStack implements secure multi-tenant data isolation
+---
+
+OrgStack is a multi-tenant platform where each organization's data must be completely isolated from other organizations. This guide explains how tenant isolation is implemented and enforced throughout the application.
+
+## Multi-tenancy architecture
+
+OrgStack uses a **shared database, shared schema** multi-tenancy model. All organizations store their data in the same database tables, with tenant isolation enforced at the application layer through a `tenantId` discriminator.
+
+<Info>
+  This architecture balances cost efficiency (one database for all tenants) with operational simplicity (no schema migrations per tenant).
+</Info>
+
+## Core isolation strategy
+
+<Steps>
+  <Step title="Every entity has a tenant identifier">
+    All tenant-specific entities include a `tenantId` field that references the owning organization:
+
+    ```java
+    @Entity
+    @Table(name = "projects")
+    public class Project extends BaseEntity {
+        @Column(nullable = false)
+        private UUID tenantId;
+        
+        @Column(nullable = false)
+        private String name;
+        
+        private String description;
+    }
+    ```
+
+    The `tenantId` is set when the entity is created and never changes.
+  </Step>
+
+  <Step title="All queries filter by tenant">
+    Every database query must include a `tenantId` filter to ensure users only access their organization's data:
+
+    ```java
+    @Repository
+    public interface ProjectRepository extends JpaRepository<Project, UUID> {
+        List<Project> findByTenantId(UUID tenantId);
+        
+        Optional<Project> findByIdAndTenantId(UUID id, UUID tenantId);
+    }
+    ```
+
+    <Warning>
+      Never query entities without filtering by `tenantId`. This is a critical security requirement.
+    </Warning>
+  </Step>
+
+  <Step title="Extract tenant from authentication context">
+    The current user's `tenantId` is extracted from the JWT token and stored in the security context:
+
+    ```java
+    @Service
+    public class ProjectService {
+        private final ProjectRepository projectRepository;
+        
+        public List<Project> getProjects() {
+            UUID tenantId = SecurityContextHolder.getContext()
+                .getAuthentication()
+                .getPrincipal()
+                .getTenantId();
+            
+            return projectRepository.findByTenantId(tenantId);
+        }
+    }
+    ```
+
+    The service layer automatically uses the authenticated user's tenant ID for all queries.
+  </Step>
+</Steps>
+
+## Database-level isolation
+
+### Tenant discriminator column
+
+Every tenant-specific table includes a `tenant_id` column:
+
+```sql
+CREATE TABLE projects (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    
+    CONSTRAINT fk_projects_tenant 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES organizations(id) 
+        ON DELETE CASCADE
+);
+```
+
+<Note>
+  The foreign key constraint ensures referential integrity and automatically cleans up tenant data when an organization is deleted.
+</Note>
+
+### Composite indexes for performance
+
+Add indexes on `(tenant_id, id)` for efficient tenant-scoped queries:
+
+```sql
+CREATE INDEX idx_projects_tenant_id ON projects(tenant_id, id);
+CREATE INDEX idx_projects_tenant_created ON projects(tenant_id, created_at DESC);
+```
+
+These composite indexes ensure tenant-filtered queries remain fast even with millions of records.
+
+## Application-level enforcement
+
+### Tenant context holder
+
+Create a utility to access the current tenant ID throughout your application:
+
+```java
+public class TenantContext {
+    public static UUID getCurrentTenantId() {
+        Authentication auth = SecurityContextHolder.getContext()
+            .getAuthentication();
+        
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new SecurityException("No authenticated user");
+        }
+        
+        UserPrincipal principal = (UserPrincipal) auth.getPrincipal();
+        return principal.getTenantId();
+    }
+}
+```
+
+### Service layer pattern
+
+All service methods should follow this pattern:
+
+```java
+@Service
+@Transactional
+public class ProjectService {
+    private final ProjectRepository projectRepository;
+    
+    public Project createProject(CreateProjectRequest request) {
+        UUID tenantId = TenantContext.getCurrentTenantId();
+        
+        Project project = new Project();
+        project.setTenantId(tenantId);
+        project.setName(request.getName());
+        project.setDescription(request.getDescription());
+        
+        return projectRepository.save(project);
+    }
+    
+    public Project getProject(UUID projectId) {
+        UUID tenantId = TenantContext.getCurrentTenantId();
+        
+        return projectRepository.findByIdAndTenantId(projectId, tenantId)
+            .orElseThrow(() -> new NotFoundException("Project not found"));
+    }
+    
+    public void deleteProject(UUID projectId) {
+        UUID tenantId = TenantContext.getCurrentTenantId();
+        
+        Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
+            .orElseThrow(() -> new NotFoundException("Project not found"));
+        
+        projectRepository.delete(project);
+    }
+}
+```
+
+<Tip>
+  Always use `findByIdAndTenantId()` instead of `findById()`. This ensures you can't accidentally access another tenant's data even if you know their entity IDs.
+</Tip>
+
+## Security best practices
+
+### Never trust client input for tenant ID
+
+<Warning>
+  **Critical security rule**: Never accept `tenantId` from request parameters, request body, or query strings. Always extract it from the authenticated user's JWT token.
+</Warning>
+
+```java
+// ❌ DANGEROUS - Client can manipulate tenantId
+@PostMapping("/projects")
+public Project createProject(@RequestBody CreateProjectRequest request) {
+    Project project = new Project();
+    project.setTenantId(request.getTenantId()); // NEVER DO THIS
+    return projectRepository.save(project);
+}
+
+// ✅ SECURE - Tenant ID from authentication context
+@PostMapping("/projects")
+public Project createProject(@RequestBody CreateProjectRequest request) {
+    UUID tenantId = TenantContext.getCurrentTenantId();
+    Project project = new Project();
+    project.setTenantId(tenantId); // Always use authenticated tenant
+    return projectRepository.save(project);
+}
+```
+
+### Use UUID-based identifiers
+
+OrgStack uses UUIDs for all entity IDs (see `BaseEntity`):
+
+```java com/orgstack/common/BaseEntity.java
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+@Getter
+public class BaseEntity {
+    @Column(nullable = false, updatable = false)
+    private UUID id;
+    
+    protected BaseEntity() {
+        this.id = UUID.randomUUID();
+    }
+}
+```
+
+<Info>
+  UUIDs prevent tenant data enumeration attacks. With sequential IDs, an attacker could guess valid IDs from other tenants. UUIDs make this computationally infeasible.
+</Info>
+
+### Repository method naming conventions
+
+Always include `AndTenantId` in your repository query methods:
+
+```java
+public interface ProjectRepository extends JpaRepository<Project, UUID> {
+    // ✅ GOOD - Explicitly filters by tenant
+    Optional<Project> findByIdAndTenantId(UUID id, UUID tenantId);
+    List<Project> findByTenantIdAndNameContaining(UUID tenantId, String name);
+    boolean existsByIdAndTenantId(UUID id, UUID tenantId);
+    
+    // ❌ AVOID - Missing tenant filter
+    Optional<Project> findById(UUID id); // Inherited, but dangerous
+}
+```
+
+## Testing tenant isolation
+
+### Unit tests
+
+Test that service methods properly filter by tenant:
+
+```java
+@SpringBootTest
+class ProjectServiceTest {
+    @Autowired
+    private ProjectService projectService;
+    
+    @Autowired
+    private ProjectRepository projectRepository;
+    
+    @Test
+    void shouldNotAccessOtherTenantsProjects() {
+        // Create project for tenant A
+        UUID tenantA = UUID.randomUUID();
+        Project projectA = new Project();
+        projectA.setTenantId(tenantA);
+        projectA.setName("Tenant A Project");
+        projectRepository.save(projectA);
+        
+        // Try to access as tenant B
+        UUID tenantB = UUID.randomUUID();
+        mockAuthenticationContext(tenantB);
+        
+        assertThrows(NotFoundException.class, () -> {
+            projectService.getProject(projectA.getId());
+        });
+    }
+}
+```
+
+### Integration tests
+
+Test tenant isolation at the API level:
+
+```java
+@SpringBootTest
+@AutoConfigureMockMvc
+class ProjectControllerTest {
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @Test
+    void shouldReturn404ForOtherTenantsProject() throws Exception {
+        String tenantAToken = generateJwtToken(tenantA);
+        String tenantBToken = generateJwtToken(tenantB);
+        
+        // Create project as tenant A
+        String response = mockMvc.perform(post("/api/projects")
+                .header("Authorization", "Bearer " + tenantAToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"Project A\"}"))
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        
+        UUID projectId = extractId(response);
+        
+        // Try to access as tenant B
+        mockMvc.perform(get("/api/projects/" + projectId)
+                .header("Authorization", "Bearer " + tenantBToken))
+            .andExpect(status().isNotFound());
+    }
+}
+```
+
+## Common pitfalls
+
+<AccordionGroup>
+  <Accordion title="Using findById() without tenant filter">
+    The JPA `findById()` method doesn't include tenant filtering. Always use `findByIdAndTenantId()` instead.
+    
+    ```java
+    // ❌ WRONG - Bypasses tenant isolation
+    Project project = projectRepository.findById(projectId)
+        .orElseThrow();
+    
+    // ✅ CORRECT - Enforces tenant isolation
+    UUID tenantId = TenantContext.getCurrentTenantId();
+    Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
+        .orElseThrow();
+    ```
+  </Accordion>
+  
+  <Accordion title="Forgetting tenant ID on entity creation">
+    Always set `tenantId` when creating new entities:
+    
+    ```java
+    // ❌ WRONG - Missing tenant ID
+    Project project = new Project();
+    project.setName("New Project");
+    projectRepository.save(project); // tenantId is null!
+    
+    // ✅ CORRECT - Sets tenant ID
+    UUID tenantId = TenantContext.getCurrentTenantId();
+    Project project = new Project();
+    project.setTenantId(tenantId);
+    project.setName("New Project");
+    projectRepository.save(project);
+    ```
+  </Accordion>
+  
+  <Accordion title="Using @Query without tenant filter">
+    Custom JPQL queries must include tenant filtering:
+    
+    ```java
+    // ❌ WRONG - No tenant filter
+    @Query("SELECT p FROM Project p WHERE p.name LIKE %:name%")
+    List<Project> searchByName(String name);
+    
+    // ✅ CORRECT - Includes tenant filter
+    @Query("SELECT p FROM Project p WHERE p.tenantId = :tenantId AND p.name LIKE %:name%")
+    List<Project> searchByNameAndTenantId(UUID tenantId, String name);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="JWT authentication" href="/guides/jwt-authentication" icon="key">
+    Learn how tenant information is embedded in JWT tokens
+  </Card>
+  
+  <Card title="Audit logging" href="/guides/audit-logging" icon="clock">
+    Track entity changes with automatic audit timestamps
+  </Card>
+</CardGroup>

@@ -1,0 +1,263 @@
+---
+title: Authentication
+description: Learn how OrgStack implements JWT-based authentication with Spring Security
+---
+
+## Overview
+
+OrgStack uses **JWT (JSON Web Tokens)** for stateless authentication. When you log in, the server issues a signed token containing your identity and organization membership. You include this token in subsequent requests to prove your identity.
+
+## Authentication flow
+
+<Steps>
+  <Step title="User submits credentials">
+    You send your email and password to the `/auth/login` endpoint.
+  </Step>
+  
+  <Step title="Server validates credentials">
+    Spring Security's authentication manager verifies your credentials against the database. Passwords are hashed using BCrypt.
+  </Step>
+  
+  <Step title="JWT token generation">
+    If credentials are valid, the server generates a JWT containing your user ID, organization ID, and roles.
+  </Step>
+  
+  <Step title="Client stores token">
+    The Angular frontend stores the JWT in memory (or httpOnly cookie for enhanced security).
+  </Step>
+  
+  <Step title="Token included in requests">
+    All subsequent API requests include the JWT in the `Authorization: Bearer <token>` header.
+  </Step>
+  
+  <Step title="Server validates token">
+    Spring Security's JWT filter validates the token signature and extracts the authenticated principal.
+  </Step>
+</Steps>
+
+## Spring Security configuration
+
+OrgStack integrates Spring Security 6.x (part of Spring Boot 4.0.3) with JWT-based authentication:
+
+```xml pom.xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+```
+
+<Info>
+Spring Security provides comprehensive security features including authentication, authorization, CSRF protection, and secure headers out of the box.
+</Info>
+
+## JWT token structure
+
+A typical OrgStack JWT contains these claims:
+
+```json
+{
+  "sub": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "organizationId": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "email": "user@example.com",
+  "roles": ["ADMIN", "USER"],
+  "iat": 1709251200,
+  "exp": 1709337600
+}
+```
+
+### Token claims explained
+
+- **sub**: Subject - your user UUID from the database
+- **organizationId**: The tenant/organization you belong to (critical for multi-tenancy)
+- **email**: Your email address for display purposes
+- **roles**: Your roles within the organization for authorization
+- **iat**: Issued at timestamp (Unix epoch)
+- **exp**: Expiration timestamp (typically 24 hours)
+
+<Warning>
+The JWT signature ensures the token cannot be tampered with. Never store sensitive data like passwords in JWT claims - they are base64 encoded but not encrypted.
+</Warning>
+
+## Password security
+
+Passwords in OrgStack are secured using industry-standard practices:
+
+<CardGroup cols={2}>
+  <Card title="BCrypt hashing" icon="lock">
+    Passwords are hashed with BCrypt, which includes automatic salting and configurable cost factor.
+  </Card>
+  <Card title="Never logged" icon="eye-slash">
+    Password fields are excluded from all logging and serialization.
+  </Card>
+  <Card title="One-way only" icon="arrow-right">
+    Passwords cannot be decrypted - only validated against the stored hash.
+  </Card>
+  <Card title="Secure transport" icon="shield">
+    Always transmitted over HTTPS in production environments.
+  </Card>
+</CardGroup>
+
+## Security filter chain
+
+Spring Security's filter chain processes every request:
+
+```
+Request
+  ↓
+[CORS Filter]
+  ↓
+[JWT Authentication Filter]
+  → Extract token from Authorization header
+  → Validate token signature
+  → Parse claims
+  → Create Authentication object
+  ↓
+[Authorization Filter]
+  → Check if user has required roles
+  → Verify tenant context matches
+  ↓
+[Controller]
+```
+
+## Token validation
+
+The JWT filter performs these validations on every request:
+
+<Accordion title="Signature verification">
+  Validates that the token was signed by the server using the secret key. This prevents token forgery.
+</Accordion>
+
+<Accordion title="Expiration check">
+  Ensures the token hasn't expired. Expired tokens are rejected with 401 Unauthorized.
+</Accordion>
+
+<Accordion title="Claims validation">
+  Verifies that required claims (sub, organizationId) are present and have valid formats (UUIDs).
+</Accordion>
+
+<Accordion title="User existence">
+  Optionally queries the database to confirm the user still exists and is active (can be cached).
+</Accordion>
+
+## Session management
+
+OrgStack uses **stateless authentication**:
+
+- **No server-side sessions**: The JWT contains all necessary information
+- **Horizontal scalability**: Any server instance can validate any token
+- **Logout handling**: Tokens cannot be invalidated server-side (use short expiration times)
+- **Refresh tokens**: Longer-lived tokens can be used to obtain new access tokens
+
+<Note>
+For enhanced security, consider implementing token revocation using a Redis blacklist for logged-out tokens.
+</Note>
+
+## Entity auditing
+
+Spring Data JPA automatically tracks who created and modified entities:
+
+```java JpaConfig.java
+package com.orgstack.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+
+@Configuration
+@EnableJpaAuditing
+public class JpaConfig {
+}
+```
+
+When combined with `@CreatedDate` and `@LastModifiedDate` annotations in `BaseEntity`, this provides automatic audit trails:
+
+```java BaseEntity.java
+@CreatedDate
+@Column(nullable = false, updatable = false)
+private Instant createdAt;
+
+@LastModifiedDate
+@Column(nullable = false)
+private Instant updatedAt;
+```
+
+<Info>
+You can extend auditing to track `createdBy` and `lastModifiedBy` by implementing Spring Security's `AuditorAware` interface.
+</Info>
+
+## Public endpoints
+
+Certain endpoints don't require authentication:
+
+- `/auth/login` - Login endpoint
+- `/auth/register` - User registration
+- `/health` - Health check for monitoring
+- `/actuator/**` - Spring Boot Actuator endpoints (should be secured in production)
+
+## CORS configuration
+
+For the Angular frontend to communicate with the Spring Boot backend, CORS (Cross-Origin Resource Sharing) must be configured:
+
+```java
+@Configuration
+public class SecurityConfig {
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(List.of("http://localhost:4200"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        return source;
+    }
+}
+```
+
+## Best practices
+
+<Steps>
+  <Step title="Use HTTPS in production">
+    Always use TLS/SSL to encrypt tokens in transit. Never send JWTs over plain HTTP.
+  </Step>
+  
+  <Step title="Short token lifetimes">
+    Keep access token expiration short (15 minutes to 1 hour). Use refresh tokens for longer sessions.
+  </Step>
+  
+  <Step title="Validate all claims">
+    Don't trust token claims blindly. Always validate UUIDs are properly formatted and reference existing entities.
+  </Step>
+  
+  <Step title="Handle token expiration gracefully">
+    Implement automatic token refresh in your frontend to provide seamless user experience.
+  </Step>
+</Steps>
+
+## Testing authentication
+
+Spring Security provides test utilities:
+
+```java
+@SpringBootTest
+@AutoConfigureMockMvc
+class SecurityTests {
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void testAdminEndpoint() throws Exception {
+        mockMvc.perform(get("/api/admin/users"))
+            .andExpect(status().isOk());
+    }
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Authorization" icon="shield" href="/concepts/authorization">
+    Learn about role-based access control
+  </Card>
+  <Card title="Multi-tenancy" icon="building" href="/concepts/multi-tenancy">
+    Understand how tenant context flows through authentication
+  </Card>
+</CardGroup>

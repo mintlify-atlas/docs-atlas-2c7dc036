@@ -1,0 +1,413 @@
+---
+title: Data model and entity structure
+description: Understand OrgStack's entity architecture with the BaseEntity pattern, JPA auditing, and UUID-based identifiers
+---
+
+OrgStack uses a clean, consistent entity structure built on Spring Data JPA with automatic auditing and UUID-based identifiers. This guide explains the data model architecture and how to create new entities.
+
+## Architecture overview
+
+OrgStack follows these data modeling principles:
+
+- **UUID identifiers** - All entities use UUIDs instead of auto-increment IDs for better distribution and security
+- **Automatic auditing** - Creation and modification timestamps are tracked automatically
+- **Immutable identifiers** - Entity IDs and creation timestamps cannot be changed after creation
+- **BaseEntity pattern** - Common fields are inherited from a shared base class
+- **Clean separation** - Controller → Service → Repository layering with explicit transaction boundaries
+
+## BaseEntity pattern
+
+All entities in OrgStack extend the `BaseEntity` class, which provides common fields that every entity needs.
+
+### BaseEntity implementation
+
+```java BaseEntity.java
+package com.orgstack.common;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.MappedSuperclass;
+import lombok.Getter;
+
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+@Getter
+public class BaseEntity {
+    @Column(nullable = false, updatable = false)
+    private UUID id;
+    
+    @CreatedDate
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+    
+    @LastModifiedDate
+    @Column(nullable = false)
+    private Instant updatedAt;
+
+    protected BaseEntity() {
+        this.id = UUID.randomUUID();
+    }
+}
+```
+
+### Key annotations explained
+
+<ParamField path="@MappedSuperclass" type="annotation">
+  Indicates this class provides common mapping information for entity classes. Fields from this class are inherited by all entities but `BaseEntity` itself is not an entity.
+
+  <Info>
+    This is different from `@Entity` - `@MappedSuperclass` classes don't have their own table, they just provide common columns to their subclasses.
+  </Info>
+</ParamField>
+
+<ParamField path="@EntityListeners(AuditingEntityListener.class)" type="annotation">
+  Enables JPA auditing callbacks. This listener automatically populates `@CreatedDate` and `@LastModifiedDate` fields.
+
+  <Note>
+    This requires JPA Auditing to be enabled via `@EnableJpaAuditing` in the configuration.
+  </Note>
+</ParamField>
+
+<ParamField path="@Getter" type="annotation">
+  Lombok annotation that generates getter methods for all fields.
+
+  This provides:
+  - `UUID getId()`
+  - `Instant getCreatedAt()`
+  - `Instant getUpdatedAt()`
+</ParamField>
+
+### BaseEntity fields
+
+<ParamField path="id" type="UUID" required>
+  Unique identifier for the entity.
+
+  ```java
+  @Column(nullable = false, updatable = false)
+  private UUID id;
+  ```
+
+  **Properties:**
+  - Generated automatically in the constructor using `UUID.randomUUID()`
+  - Cannot be null (`nullable = false`)
+  - Cannot be changed after creation (`updatable = false`)
+  - Type 4 (random) UUID format
+
+  <Info>
+    UUIDs provide better security than sequential IDs (harder to guess) and work well in distributed systems.
+  </Info>
+</ParamField>
+
+<ParamField path="createdAt" type="Instant" required>
+  Timestamp when the entity was first persisted to the database.
+
+  ```java
+  @CreatedDate
+  @Column(nullable = false, updatable = false)
+  private Instant createdAt;
+  ```
+
+  **Properties:**
+  - Automatically set by JPA auditing on insert
+  - UTC timestamp using `java.time.Instant`
+  - Cannot be null or updated after creation
+</ParamField>
+
+<ParamField path="updatedAt" type="Instant" required>
+  Timestamp when the entity was last modified.
+
+  ```java
+  @LastModifiedDate
+  @Column(nullable = false)
+  private Instant updatedAt;
+  ```
+
+  **Properties:**
+  - Automatically set by JPA auditing on insert and update
+  - Updates automatically on every modification
+  - Cannot be null
+</ParamField>
+
+## JPA configuration
+
+JPA auditing must be enabled for the `@CreatedDate` and `@LastModifiedDate` annotations to work.
+
+```java JpaConfig.java
+package com.orgstack.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+
+@Configuration
+@EnableJpaAuditing
+public class JpaConfig {
+}
+```
+
+<ParamField path="@EnableJpaAuditing" type="annotation">
+  Activates JPA auditing throughout the application. This enables:
+  - Automatic population of `@CreatedDate` fields on entity creation
+  - Automatic update of `@LastModifiedDate` fields on entity modification
+  - Support for `@CreatedBy` and `@LastModifiedBy` (not currently used)
+</ParamField>
+
+## Creating new entities
+
+To create a new entity in OrgStack, extend `BaseEntity` and add your domain-specific fields.
+
+### Example: Organization entity
+
+<Steps>
+  <Step title="Create the entity class">
+    ```java Organization.java
+    package com.orgstack.organization.entity;
+
+    import com.orgstack.common.BaseEntity;
+    import jakarta.persistence.Column;
+    import jakarta.persistence.Entity;
+    import jakarta.persistence.Table;
+    import lombok.Getter;
+    import lombok.NoArgsConstructor;
+    import lombok.Setter;
+
+    @Entity
+    @Table(name = "organizations")
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    public class Organization extends BaseEntity {
+        
+        @Column(nullable = false, unique = true)
+        private String name;
+        
+        @Column(length = 500)
+        private String description;
+        
+        @Column(nullable = false)
+        private Boolean active = true;
+    }
+    ```
+
+    <Note>
+      By extending `BaseEntity`, the `Organization` entity automatically inherits `id`, `createdAt`, and `updatedAt` fields.
+    </Note>
+  </Step>
+
+  <Step title="The entity automatically includes">
+    - `UUID id` - Unique identifier
+    - `Instant createdAt` - Creation timestamp
+    - `Instant updatedAt` - Last modification timestamp
+    - All your custom fields (`name`, `description`, `active`)
+  </Step>
+
+  <Step title="Using the entity">
+    ```java
+    Organization org = new Organization();
+    org.setName("Acme Corp");
+    org.setDescription("A multi-national corporation");
+    organizationRepository.save(org);
+
+    // Automatically populated:
+    // org.getId() - UUID generated in constructor
+    // org.getCreatedAt() - Set by JPA auditing on save
+    // org.getUpdatedAt() - Set by JPA auditing on save
+    ```
+  </Step>
+</Steps>
+
+### Example: User entity
+
+```java User.java
+package com.orgstack.user.entity;
+
+import com.orgstack.common.BaseEntity;
+import com.orgstack.organization.entity.Organization;
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+@Entity
+@Table(name = "users")
+@Getter
+@Setter
+@NoArgsConstructor
+public class User extends BaseEntity {
+    
+    @Column(nullable = false, unique = true)
+    private String email;
+    
+    @Column(nullable = false)
+    private String passwordHash;
+    
+    @Column(nullable = false)
+    private String firstName;
+    
+    @Column(nullable = false)
+    private String lastName;
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "organization_id", nullable = false)
+    private Organization organization;
+    
+    @Column(nullable = false)
+    private Boolean active = true;
+}
+```
+
+## Database schema
+
+With the `BaseEntity` pattern, every table will have these common columns:
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `UUID` | PRIMARY KEY, NOT NULL | Unique identifier |
+| `created_at` | `TIMESTAMP` | NOT NULL | Creation timestamp (UTC) |
+| `updated_at` | `TIMESTAMP` | NOT NULL | Last modification timestamp (UTC) |
+
+For example, the `organizations` table would look like:
+
+```sql
+CREATE TABLE organizations (
+    id UUID PRIMARY KEY NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description VARCHAR(500),
+    active BOOLEAN NOT NULL
+);
+```
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Always extend BaseEntity">
+    Every domain entity should extend `BaseEntity` to maintain consistency:
+
+    ```java
+    @Entity
+    public class MyEntity extends BaseEntity {
+        // Your fields here
+    }
+    ```
+
+    This ensures all entities have the same identification and auditing fields.
+  </Accordion>
+
+  <Accordion title="Use protected constructor in BaseEntity">
+    The `BaseEntity` constructor is `protected`, not `public`:
+
+    ```java
+    protected BaseEntity() {
+        this.id = UUID.randomUUID();
+    }
+    ```
+
+    This prevents direct instantiation while allowing subclass construction. Your entity classes should have their own public constructors.
+  </Accordion>
+
+  <Accordion title="Don't manually set audit fields">
+    Never manually set `id`, `createdAt`, or `updatedAt`:
+
+    ```java
+    // ❌ Wrong - these are managed automatically
+    entity.setCreatedAt(Instant.now());
+    entity.setUpdatedAt(Instant.now());
+
+    // ✅ Correct - let JPA handle it
+    repository.save(entity);
+    ```
+
+    JPA auditing handles these automatically.
+  </Accordion>
+
+  <Accordion title="Use Instant for timestamps">
+    OrgStack uses `java.time.Instant` for all timestamps:
+
+    ```java
+    private Instant createdAt;  // ✅ Correct
+    private Date createdAt;      // ❌ Avoid legacy Date
+    private LocalDateTime createdAt; // ❌ Avoid, lacks timezone
+    ```
+
+    `Instant` represents a point in time in UTC, avoiding timezone confusion.
+  </Accordion>
+
+  <Accordion title="Follow naming conventions">
+    - **Entity classes**: Singular, PascalCase (e.g., `Organization`, `User`)
+    - **Table names**: Plural, snake_case (e.g., `organizations`, `users`)
+    - **Column names**: snake_case (e.g., `first_name`, `created_at`)
+    - **Java fields**: camelCase (e.g., `firstName`, `createdAt`)
+  </Accordion>
+</AccordionGroup>
+
+## Transaction management
+
+OrgStack disables Open Session in View (OSIV) to enforce explicit transaction boundaries:
+
+```properties application.properties
+spring.jpa.open-in-view=false
+```
+
+<Warning>
+  With OSIV disabled, you must be careful about lazy loading. Always fetch required associations within a transaction (typically in the service layer).
+</Warning>
+
+**Good practice:**
+
+```java
+@Service
+@Transactional
+public class OrganizationService {
+    
+    public OrganizationDTO getOrganization(UUID id) {
+        // Fetch within transaction
+        Organization org = repository.findById(id)
+            .orElseThrow(() -> new NotFoundException("Organization not found"));
+        
+        // Access lazy fields while transaction is open
+        return new OrganizationDTO(
+            org.getId(),
+            org.getName(),
+            org.getCreatedAt()
+        );
+    }
+}
+```
+
+## Validation
+
+OrgStack uses Bean Validation (JSR 380) for entity validation:
+
+```java
+@Entity
+public class Organization extends BaseEntity {
+    
+    @NotBlank(message = "Name is required")
+    @Size(max = 255, message = "Name must not exceed 255 characters")
+    private String name;
+    
+    @Email(message = "Invalid email format")
+    private String contactEmail;
+}
+```
+
+Validation happens automatically when the entity is persisted or updated.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Learn how to configure JPA and database settings
+  </Card>
+  <Card title="Development setup" icon="code" href="/guides/setup">
+    Set up your complete development environment
+  </Card>
+</CardGroup>

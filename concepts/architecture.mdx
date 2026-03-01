@@ -1,0 +1,522 @@
+---
+title: Architecture
+description: Learn about OrgStack's clean layered architecture and separation of concerns
+---
+
+## Overview
+
+OrgStack follows a **clean layered architecture** that separates concerns and makes the codebase maintainable, testable, and scalable. The architecture enforces clear boundaries between layers, with each layer having specific responsibilities.
+
+## Architectural layers
+
+OrgStack implements a three-tier architecture pattern:
+
+```
+┌─────────────────────────────────────────┐
+│           Controller Layer              │
+│  (REST endpoints, request validation)   │
+└─────────────────┬───────────────────────┘
+                  │ DTOs
+                  ↓
+┌─────────────────────────────────────────┐
+│            Service Layer                │
+│  (Business logic, transactions)         │
+└─────────────────┬───────────────────────┘
+                  │ Entities
+                  ↓
+┌─────────────────────────────────────────┐
+│          Repository Layer               │
+│  (Data access, JPA queries)             │
+└─────────────────┬───────────────────────┘
+                  │
+                  ↓
+            PostgreSQL Database
+```
+
+<Info>
+Each layer communicates only with adjacent layers. Controllers never access repositories directly, ensuring proper separation of concerns.
+</Info>
+
+## Controller layer
+
+Controllers handle HTTP requests and responses. They are responsible for:
+
+- Accepting HTTP requests
+- Validating request parameters and body
+- Converting DTOs to domain models
+- Delegating business logic to services
+- Converting domain models to response DTOs
+- Handling HTTP status codes and headers
+
+```java
+@RestController
+@RequestMapping("/api/projects")
+@RequiredArgsConstructor
+public class ProjectController {
+    private final ProjectService projectService;
+    
+    @GetMapping
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<List<ProjectResponse>> listProjects() {
+        List<Project> projects = projectService.findAllInCurrentOrganization();
+        return ResponseEntity.ok(
+            projects.stream()
+                .map(ProjectResponse::fromEntity)
+                .toList()
+        );
+    }
+    
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ProjectResponse> createProject(
+            @Valid @RequestBody CreateProjectRequest request) {
+        Project project = projectService.createProject(request);
+        return ResponseEntity
+            .status(HttpStatus.CREATED)
+            .body(ProjectResponse.fromEntity(project));
+    }
+}
+```
+
+### Controller responsibilities
+
+<CardGroup cols={2}>
+  <Card title="Request validation" icon="check">
+    Use `@Valid` and Bean Validation annotations to validate input
+  </Card>
+  <Card title="HTTP semantics" icon="globe">
+    Return appropriate status codes (200, 201, 400, 404, etc.)
+  </Card>
+  <Card title="Error handling" icon="triangle-exclamation">
+    Catch service exceptions and convert to HTTP responses
+  </Card>
+  <Card title="Documentation" icon="book">
+    Use OpenAPI annotations for API documentation
+  </Card>
+</CardGroup>
+
+<Warning>
+Controllers should be thin. Never put business logic in controllers. Delegate to services immediately.
+</Warning>
+
+## Service layer
+
+Services contain business logic and orchestrate operations across repositories. They are responsible for:
+
+- Implementing business rules
+- Managing transactions
+- Enforcing authorization rules
+- Coordinating multiple repository calls
+- Validating business constraints
+- Emitting domain events
+
+```java
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class ProjectService {
+    private final ProjectRepository projectRepository;
+    private final UserRepository userRepository;
+    private final SecurityContext securityContext;
+    
+    public Project createProject(CreateProjectRequest request) {
+        // Get current user and organization from security context
+        UUID orgId = securityContext.getCurrentOrganizationId();
+        UUID userId = securityContext.getCurrentUserId();
+        
+        // Validate business rules
+        if (projectRepository.countByOrganizationId(orgId) >= getMaxProjects(orgId)) {
+            throw new ProjectLimitExceededException();
+        }
+        
+        // Create entity
+        Project project = new Project();
+        project.setName(request.getName());
+        project.setOrganizationId(orgId);
+        project.setOwnerId(userId);
+        
+        // Persist
+        return projectRepository.save(project);
+    }
+    
+    @Transactional(readOnly = true)
+    public List<Project> findAllInCurrentOrganization() {
+        UUID orgId = securityContext.getCurrentOrganizationId();
+        return projectRepository.findByOrganizationId(orgId);
+    }
+}
+```
+
+### Service characteristics
+
+<Steps>
+  <Step title="Transactional">
+    Annotate services with `@Transactional` to ensure database consistency. Use `readOnly = true` for queries.
+  </Step>
+  
+  <Step title="Stateless">
+    Services should not maintain state between method calls. They are Spring singletons.
+  </Step>
+  
+  <Step title="Tenant-aware">
+    Always filter data by the current organization. Never leak data across tenant boundaries.
+  </Step>
+  
+  <Step title="Testable">
+    Design services to be easily unit tested with mocked repositories.
+  </Step>
+</Steps>
+
+## Repository layer
+
+Repositories abstract data access using Spring Data JPA. They are responsible for:
+
+- Defining query methods
+- Executing database operations
+- Managing entity lifecycle
+- Providing custom queries when needed
+
+```java
+@Repository
+public interface ProjectRepository extends JpaRepository<Project, UUID> {
+    
+    List<Project> findByOrganizationId(UUID organizationId);
+    
+    @Query("SELECT p FROM Project p WHERE p.organizationId = :orgId AND p.status = :status")
+    List<Project> findActiveProjects(
+        @Param("orgId") UUID organizationId, 
+        @Param("status") ProjectStatus status
+    );
+    
+    long countByOrganizationId(UUID organizationId);
+    
+    boolean existsByOrganizationIdAndName(UUID organizationId, String name);
+}
+```
+
+<Info>
+Spring Data JPA automatically implements these interfaces at runtime. You only need to define the method signatures.
+</Info>
+
+### Repository best practices
+
+<Accordion title="Use method name conventions">
+  Spring Data JPA derives queries from method names:
+  - `findByOrganizationId` → `WHERE organization_id = ?`
+  - `findByNameContaining` → `WHERE name LIKE %?%`
+  - `existsByEmail` → `SELECT EXISTS(WHERE email = ?)`
+</Accordion>
+
+<Accordion title="Custom queries with @Query">
+  For complex queries, use JPQL or native SQL:
+  ```java
+  @Query(value = "SELECT * FROM projects WHERE created_at > :since", nativeQuery = true)
+  List<Project> findRecentProjects(@Param("since") Instant since);
+  ```
+</Accordion>
+
+<Accordion title="Always filter by tenant">
+  Include organization ID in all query methods to enforce multi-tenancy:
+  ```java
+  List<Project> findByOrganizationIdAndStatus(UUID orgId, Status status);
+  ```
+</Accordion>
+
+## Base entity design
+
+All entities inherit from `BaseEntity`, which provides common fields:
+
+```java BaseEntity.java
+package com.orgstack.common;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.MappedSuperclass;
+import lombok.Getter;
+
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+@Getter
+public class BaseEntity {
+    @Column(nullable = false, updatable = false)
+    private UUID id;
+    
+    @CreatedDate
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+    
+    @LastModifiedDate
+    @Column(nullable = false)
+    private Instant updatedAt;
+
+    protected BaseEntity() {
+        this.id = UUID.randomUUID();
+    }
+}
+```
+
+### Entity features
+
+- **UUID primary keys**: Prevents ID enumeration and supports distributed systems
+- **Automatic timestamps**: JPA auditing populates `createdAt` and `updatedAt`
+- **Immutable IDs**: The `updatable = false` constraint prevents accidental changes
+- **Lombok integration**: `@Getter` generates getters automatically
+
+<Note>
+Enable JPA auditing by adding `@EnableJpaAuditing` to a configuration class.
+</Note>
+
+## JPA configuration
+
+OrgStack enables JPA auditing for automatic timestamp management:
+
+```java JpaConfig.java
+package com.orgstack.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+
+@Configuration
+@EnableJpaAuditing
+public class JpaConfig {
+}
+```
+
+This configuration allows `@CreatedDate` and `@LastModifiedDate` annotations in `BaseEntity` to work automatically.
+
+## Database configuration
+
+OrgStack uses PostgreSQL with production-ready settings:
+
+```properties application.properties
+spring.application.name=backend
+
+# Datasource
+spring.datasource.url=jdbc:postgresql://localhost:5432/orgstack
+spring.datasource.username=orgstack
+spring.datasource.password=orgstack_dev_password
+
+# JPA
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.format_sql=false
+spring.jpa.open-in-view=false
+```
+
+### Configuration explained
+
+<CardGroup cols={2}>
+  <Card title="ddl-auto=validate" icon="check-circle">
+    Validates schema against entities but doesn't auto-generate tables. Use migrations instead.
+  </Card>
+  <Card title="show-sql=false" icon="eye-slash">
+    Disables SQL logging in production for performance. Enable in development.
+  </Card>
+  <Card title="open-in-view=false" icon="ban">
+    Disables lazy loading outside transactions to prevent N+1 queries.
+  </Card>
+  <Card title="PostgreSQL" icon="database">
+    Production-grade relational database with excellent JSON support.
+  </Card>
+</CardGroup>
+
+## Technology stack
+
+OrgStack is built with modern, production-ready technologies:
+
+```xml pom.xml
+<parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.0.3</version>
+</parent>
+
+<properties>
+    <java.version>25</java.version>
+</properties>
+
+<dependencies>
+    <!-- Web framework -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    
+    <!-- Security -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+    
+    <!-- Data access -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    
+    <!-- Database -->
+    <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <scope>runtime</scope>
+    </dependency>
+    
+    <!-- Validation -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    
+    <!-- Observability -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+</dependencies>
+```
+
+## Application entry point
+
+The main application class bootstraps Spring Boot:
+
+```java BackendApplication.java
+package com.orgstack;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class BackendApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(BackendApplication.class, args);
+    }
+}
+```
+
+`@SpringBootApplication` enables:
+- Component scanning
+- Auto-configuration
+- Configuration properties
+
+## Dependency injection
+
+OrgStack uses constructor injection for all dependencies:
+
+```java
+@Service
+@RequiredArgsConstructor // Lombok generates constructor
+public class UserService {
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final EmailService emailService;
+    
+    // Dependencies are final and injected via constructor
+}
+```
+
+<Info>
+Constructor injection is preferred over field injection because it makes dependencies explicit and enables easier testing.
+</Info>
+
+## Error handling
+
+Implement a global exception handler for consistent error responses:
+
+```java
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+    
+    @ExceptionHandler(EntityNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNotFound(EntityNotFoundException ex) {
+        return ResponseEntity
+            .status(HttpStatus.NOT_FOUND)
+            .body(new ErrorResponse(ex.getMessage()));
+    }
+    
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ErrorResponse> handleForbidden(ForbiddenException ex) {
+        return ResponseEntity
+            .status(HttpStatus.FORBIDDEN)
+            .body(new ErrorResponse(ex.getMessage()));
+    }
+}
+```
+
+## Testing strategy
+
+<Steps>
+  <Step title="Unit tests">
+    Test services in isolation with mocked repositories:
+    ```java
+    @ExtendWith(MockitoExtension.class)
+    class ProjectServiceTest {
+        @Mock
+        private ProjectRepository projectRepository;
+        
+        @InjectMocks
+        private ProjectService projectService;
+    }
+    ```
+  </Step>
+  
+  <Step title="Integration tests">
+    Test controllers with full Spring context:
+    ```java
+    @SpringBootTest
+    @AutoConfigureMockMvc
+    class ProjectControllerTest {
+        @Autowired
+        private MockMvc mockMvc;
+    }
+    ```
+  </Step>
+  
+  <Step title="Repository tests">
+    Test queries against a real database:
+    ```java
+    @DataJpaTest
+    class ProjectRepositoryTest {
+        @Autowired
+        private ProjectRepository projectRepository;
+    }
+    ```
+  </Step>
+</Steps>
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Single responsibility" icon="bullseye">
+    Each class should have one reason to change. Keep controllers thin, services focused.
+  </Card>
+  <Card title="Dependency inversion" icon="arrows-rotate">
+    Depend on interfaces, not concrete implementations. Use Spring's auto-configuration.
+  </Card>
+  <Card title="Transaction boundaries" icon="border-all">
+    Keep transactions short. Use `@Transactional` on service methods, not controllers.
+  </Card>
+  <Card title="Immutability" icon="lock">
+    Prefer immutable DTOs and value objects. Use records in Java 17+.
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Multi-tenancy" icon="building" href="/concepts/multi-tenancy">
+    Learn how tenant isolation flows through layers
+  </Card>
+  <Card title="Authentication" icon="key" href="/concepts/authentication">
+    Understand JWT-based security
+  </Card>
+  <Card title="Authorization" icon="shield" href="/concepts/authorization">
+    Implement role-based access control
+  </Card>
+</CardGroup>

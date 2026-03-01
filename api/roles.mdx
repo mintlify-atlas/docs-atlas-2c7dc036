@@ -1,0 +1,659 @@
+---
+title: Roles
+description: Manage roles and permissions in your OrgStack organizations
+---
+
+The Roles API allows you to create and manage custom roles with fine-grained permissions. Roles define what actions users can perform within an organization.
+
+## Authentication
+
+All role endpoints require authentication using a JWT bearer token in the Authorization header:
+
+```
+Authorization: Bearer YOUR_JWT_TOKEN
+```
+
+---
+
+## Get roles
+
+<Note>
+  This endpoint returns roles available within the specified organization. System-defined roles (owner, admin, member, viewer) are included along with any custom roles.
+</Note>
+
+```http
+GET /api/roles
+```
+
+Retrieves a list of roles. You can filter and sort the results using query parameters.
+
+### Query parameters
+
+<ParamField query="organizationId" type="string" required>
+  Organization ID to retrieve roles from (UUID)
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  The page number for pagination
+</ParamField>
+
+<ParamField query="limit" type="integer" default="20">
+  Number of roles to return per page (maximum 100)
+</ParamField>
+
+<ParamField query="sort" type="string" default="name">
+  Field to sort by. Options: `name`, `createdAt`, `updatedAt`
+</ParamField>
+
+<ParamField query="order" type="string" default="asc">
+  Sort order. Options: `asc`, `desc`
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by role type. Options: `system`, `custom`
+</ParamField>
+
+<ParamField query="search" type="string">
+  Search roles by name or description
+</ParamField>
+
+### Response
+
+<ResponseField name="data" type="array">
+  Array of role objects
+  
+  <Expandable title="Role object">
+    <ResponseField name="id" type="string" required>
+      Unique identifier for the role (UUID)
+    </ResponseField>
+    
+    <ResponseField name="name" type="string" required>
+      Role name (e.g., "admin", "member", "billing-manager")
+    </ResponseField>
+    
+    <ResponseField name="displayName" type="string" required>
+      Human-readable role name
+    </ResponseField>
+    
+    <ResponseField name="description" type="string">
+      Description of the role's purpose and permissions
+    </ResponseField>
+    
+    <ResponseField name="type" type="string" required>
+      Role type. Options: `system` (built-in, cannot be modified), `custom` (user-defined)
+    </ResponseField>
+    
+    <ResponseField name="organizationId" type="string" required>
+      Organization this role belongs to (UUID)
+    </ResponseField>
+    
+    <ResponseField name="permissions" type="array" required>
+      Array of permission strings granted to this role
+      
+      <Expandable title="Available permissions">
+        <ResponseField name="organizations.read" type="string">
+          View organization details
+        </ResponseField>
+        
+        <ResponseField name="organizations.update" type="string">
+          Update organization settings
+        </ResponseField>
+        
+        <ResponseField name="organizations.delete" type="string">
+          Delete the organization
+        </ResponseField>
+        
+        <ResponseField name="users.read" type="string">
+          View users in the organization
+        </ResponseField>
+        
+        <ResponseField name="users.create" type="string">
+          Create new users
+        </ResponseField>
+        
+        <ResponseField name="users.update" type="string">
+          Update user information
+        </ResponseField>
+        
+        <ResponseField name="users.delete" type="string">
+          Remove users from the organization
+        </ResponseField>
+        
+        <ResponseField name="roles.read" type="string">
+          View roles and permissions
+        </ResponseField>
+        
+        <ResponseField name="roles.create" type="string">
+          Create custom roles
+        </ResponseField>
+        
+        <ResponseField name="roles.update" type="string">
+          Modify role permissions
+        </ResponseField>
+        
+        <ResponseField name="roles.delete" type="string">
+          Delete custom roles
+        </ResponseField>
+        
+        <ResponseField name="roles.assign" type="string">
+          Assign roles to users
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="userCount" type="integer">
+      Number of users assigned to this role
+    </ResponseField>
+    
+    <ResponseField name="isDefault" type="boolean" required>
+      Whether this is the default role for new organization members
+    </ResponseField>
+    
+    <ResponseField name="metadata" type="object">
+      Custom metadata key-value pairs
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="string" required>
+      ISO 8601 timestamp when the role was created
+    </ResponseField>
+    
+    <ResponseField name="updatedAt" type="string" required>
+      ISO 8601 timestamp when the role was last updated
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination metadata
+  
+  <Expandable title="Pagination object">
+    <ResponseField name="page" type="integer">
+      Current page number
+    </ResponseField>
+    
+    <ResponseField name="limit" type="integer">
+      Number of items per page
+    </ResponseField>
+    
+    <ResponseField name="total" type="integer">
+      Total number of roles
+    </ResponseField>
+    
+    <ResponseField name="totalPages" type="integer">
+      Total number of pages
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example request
+
+<CodeGroup>
+```bash cURL
+curl -X GET "https://api.orgstack.io/api/roles?organizationId=550e8400-e29b-41d4-a716-446655440000&page=1&limit=10" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json"
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.orgstack.io/api/roles?organizationId=550e8400-e29b-41d4-a716-446655440000&page=1&limit=10', {
+  method: 'GET',
+  headers: {
+    'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+    'Content-Type': 'application/json'
+  }
+});
+
+const data = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'https://api.orgstack.io/api/roles',
+    params={
+        'organizationId': '550e8400-e29b-41d4-a716-446655440000',
+        'page': 1,
+        'limit': 10
+    },
+    headers={
+        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        'Content-Type': 'application/json'
+    }
+)
+
+data = response.json()
+```
+</CodeGroup>
+
+### Example response
+
+```json 200 - Success
+{
+  "data": [
+    {
+      "id": "a1b2c3d4-e5f6-4a5b-8c7d-9e0f1a2b3c4d",
+      "name": "admin",
+      "displayName": "Administrator",
+      "description": "Full access to all organization resources and settings",
+      "type": "system",
+      "organizationId": "550e8400-e29b-41d4-a716-446655440000",
+      "permissions": [
+        "organizations.read",
+        "organizations.update",
+        "users.read",
+        "users.create",
+        "users.update",
+        "users.delete",
+        "roles.read",
+        "roles.create",
+        "roles.update",
+        "roles.delete",
+        "roles.assign"
+      ],
+      "userCount": 3,
+      "isDefault": false,
+      "metadata": {},
+      "createdAt": "2024-01-15T08:30:00.000Z",
+      "updatedAt": "2024-01-15T08:30:00.000Z"
+    },
+    {
+      "id": "b2c3d4e5-f6a7-5b6c-9d8e-0f1a2b3c4d5e",
+      "name": "member",
+      "displayName": "Member",
+      "description": "Standard member with read and write access to most resources",
+      "type": "system",
+      "organizationId": "550e8400-e29b-41d4-a716-446655440000",
+      "permissions": [
+        "organizations.read",
+        "users.read",
+        "roles.read"
+      ],
+      "userCount": 15,
+      "isDefault": true,
+      "metadata": {},
+      "createdAt": "2024-01-15T08:30:00.000Z",
+      "updatedAt": "2024-01-15T08:30:00.000Z"
+    },
+    {
+      "id": "c3d4e5f6-a7b8-6c7d-0e9f-1a2b3c4d5e6f",
+      "name": "billing-manager",
+      "displayName": "Billing Manager",
+      "description": "Manages billing, subscriptions, and payment methods",
+      "type": "custom",
+      "organizationId": "550e8400-e29b-41d4-a716-446655440000",
+      "permissions": [
+        "organizations.read",
+        "billing.read",
+        "billing.update",
+        "subscriptions.read",
+        "subscriptions.update",
+        "invoices.read"
+      ],
+      "userCount": 2,
+      "isDefault": false,
+      "metadata": {
+        "department": "Finance",
+        "createdBy": "[email protected]"
+      },
+      "createdAt": "2024-03-10T14:20:00.000Z",
+      "updatedAt": "2024-03-10T14:20:00.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 3,
+    "totalPages": 1
+  }
+}
+```
+
+```json 401 - Unauthorized
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Invalid or missing authentication token"
+  }
+}
+```
+
+```json 403 - Forbidden
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "You do not have permission to view roles in this organization"
+  }
+}
+```
+
+```json 404 - Not found
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Organization not found"
+  }
+}
+```
+
+---
+
+## Create role
+
+<Warning>
+  Creating custom roles requires `roles.create` permission. System roles (owner, admin, member, viewer) cannot be created or modified. Only custom roles can be created and edited.
+</Warning>
+
+```http
+POST /api/roles
+```
+
+Creates a new custom role with specified permissions. Role names must be unique within an organization.
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  Role name (3-50 characters, lowercase letters, numbers, and hyphens only)
+</ParamField>
+
+<ParamField body="displayName" type="string" required>
+  Human-readable role name (2-100 characters)
+</ParamField>
+
+<ParamField body="description" type="string">
+  Description of the role's purpose (up to 500 characters)
+</ParamField>
+
+<ParamField body="organizationId" type="string" required>
+  Organization ID to create the role in (UUID)
+</ParamField>
+
+<ParamField body="permissions" type="array" required>
+  Array of permission strings to grant to this role. Must include at least one permission.
+  
+  <Expandable title="Available permissions">
+    - `organizations.read` - View organization details
+    - `organizations.update` - Update organization settings
+    - `organizations.delete` - Delete the organization
+    - `users.read` - View users
+    - `users.create` - Create users
+    - `users.update` - Update users
+    - `users.delete` - Delete users
+    - `roles.read` - View roles
+    - `roles.create` - Create roles
+    - `roles.update` - Update roles
+    - `roles.delete` - Delete roles
+    - `roles.assign` - Assign roles to users
+    - `billing.read` - View billing information
+    - `billing.update` - Update billing settings
+    - `subscriptions.read` - View subscriptions
+    - `subscriptions.update` - Manage subscriptions
+    - `invoices.read` - View invoices
+    - `api-keys.read` - View API keys
+    - `api-keys.create` - Create API keys
+    - `api-keys.delete` - Delete API keys
+  </Expandable>
+</ParamField>
+
+<ParamField body="isDefault" type="boolean" default="false">
+  Whether this should be the default role for new members. Only one role can be default per organization.
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Custom metadata as key-value pairs (optional)
+</ParamField>
+
+### Response
+
+Returns the created role object with all fields populated, including generated `id`, `createdAt`, and `updatedAt` timestamps.
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the role (UUID)
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Role name
+</ResponseField>
+
+<ResponseField name="displayName" type="string" required>
+  Human-readable role name
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Role description
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  Role type (always `custom` for created roles)
+</ResponseField>
+
+<ResponseField name="organizationId" type="string" required>
+  Organization ID
+</ResponseField>
+
+<ResponseField name="permissions" type="array" required>
+  Array of granted permissions
+</ResponseField>
+
+<ResponseField name="userCount" type="integer">
+  Number of users with this role (0 for new roles)
+</ResponseField>
+
+<ResponseField name="isDefault" type="boolean" required>
+  Whether this is the default role
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  Custom metadata
+</ResponseField>
+
+<ResponseField name="createdAt" type="string" required>
+  ISO 8601 timestamp when created
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string" required>
+  ISO 8601 timestamp when last updated
+</ResponseField>
+
+### Example request
+
+<CodeGroup>
+```bash cURL
+curl -X POST "https://api.orgstack.io/api/roles" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "content-editor",
+    "displayName": "Content Editor",
+    "description": "Can create and edit content but cannot publish or delete",
+    "organizationId": "550e8400-e29b-41d4-a716-446655440000",
+    "permissions": [
+      "organizations.read",
+      "content.read",
+      "content.create",
+      "content.update",
+      "media.read",
+      "media.upload"
+    ],
+    "isDefault": false,
+    "metadata": {
+      "department": "Marketing",
+      "accessLevel": "standard"
+    }
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.orgstack.io/api/roles', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    name: 'content-editor',
+    displayName: 'Content Editor',
+    description: 'Can create and edit content but cannot publish or delete',
+    organizationId: '550e8400-e29b-41d4-a716-446655440000',
+    permissions: [
+      'organizations.read',
+      'content.read',
+      'content.create',
+      'content.update',
+      'media.read',
+      'media.upload'
+    ],
+    isDefault: false,
+    metadata: {
+      department: 'Marketing',
+      accessLevel: 'standard'
+    }
+  })
+});
+
+const data = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'https://api.orgstack.io/api/roles',
+    headers={
+        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        'Content-Type': 'application/json'
+    },
+    json={
+        'name': 'content-editor',
+        'displayName': 'Content Editor',
+        'description': 'Can create and edit content but cannot publish or delete',
+        'organizationId': '550e8400-e29b-41d4-a716-446655440000',
+        'permissions': [
+            'organizations.read',
+            'content.read',
+            'content.create',
+            'content.update',
+            'media.read',
+            'media.upload'
+        ],
+        'isDefault': False,
+        'metadata': {
+            'department': 'Marketing',
+            'accessLevel': 'standard'
+        }
+    }
+)
+
+data = response.json()
+```
+</CodeGroup>
+
+### Example response
+
+```json 201 - Created
+{
+  "id": "d4e5f6a7-b8c9-7d8e-1f0a-2b3c4d5e6f7a",
+  "name": "content-editor",
+  "displayName": "Content Editor",
+  "description": "Can create and edit content but cannot publish or delete",
+  "type": "custom",
+  "organizationId": "550e8400-e29b-41d4-a716-446655440000",
+  "permissions": [
+    "organizations.read",
+    "content.read",
+    "content.create",
+    "content.update",
+    "media.read",
+    "media.upload"
+  ],
+  "userCount": 0,
+  "isDefault": false,
+  "metadata": {
+    "department": "Marketing",
+    "accessLevel": "standard"
+  },
+  "createdAt": "2026-03-01T10:30:00.000Z",
+  "updatedAt": "2026-03-01T10:30:00.000Z"
+}
+```
+
+```json 400 - Bad request
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request body",
+    "details": [
+      {
+        "field": "permissions",
+        "message": "At least one permission is required"
+      },
+      {
+        "field": "name",
+        "message": "Role name must contain only lowercase letters, numbers, and hyphens"
+      }
+    ]
+  }
+}
+```
+
+```json 401 - Unauthorized
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Invalid or missing authentication token"
+  }
+}
+```
+
+```json 403 - Forbidden
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "You do not have permission to create roles in this organization"
+  }
+}
+```
+
+```json 404 - Not found
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Organization not found"
+  }
+}
+```
+
+```json 409 - Conflict
+{
+  "error": {
+    "code": "CONFLICT",
+    "message": "A role with this name already exists in the organization"
+  }
+}
+```
+
+## Permission hierarchy
+
+<Note>
+  Permissions follow a hierarchical structure. Some permissions implicitly grant related permissions:
+  
+  - `organizations.delete` includes `organizations.update` and `organizations.read`
+  - `users.delete` includes `users.update` and `users.read`
+  - `roles.assign` includes `roles.read`
+  
+  When designing custom roles, consider the minimum permissions needed for the role's purpose.
+</Note>
+
+## Error codes
+
+The Roles API may return the following error codes:
+
+| Code | Description |
+|------|-------------|
+| `UNAUTHORIZED` | Missing or invalid authentication token |
+| `FORBIDDEN` | Insufficient permissions to perform the action |
+| `VALIDATION_ERROR` | Request body validation failed |
+| `CONFLICT` | Resource conflict (e.g., duplicate role name) |
+| `NOT_FOUND` | Role or organization not found |
+| `RATE_LIMIT_EXCEEDED` | Too many requests, please retry later |
+| `INTERNAL_ERROR` | Unexpected server error |

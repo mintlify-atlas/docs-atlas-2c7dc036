@@ -1,0 +1,348 @@
+---
+title: Docker and Docker Compose setup
+description: Run OrgStack with Docker for consistent development and deployment
+---
+
+This guide shows you how to use Docker and Docker Compose to run OrgStack's PostgreSQL database and connect your Spring Boot application to it.
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install Docker">
+    Download and install Docker Desktop from [docker.com](https://www.docker.com/products/docker-desktop/):
+
+    - **macOS**: Download Docker Desktop for Mac
+    - **Windows**: Download Docker Desktop for Windows
+    - **Linux**: Install Docker Engine using your package manager
+
+    ```bash
+    # Verify installation
+    docker --version
+    docker compose version
+    ```
+
+    <Info>Docker Compose is included with Docker Desktop. On Linux, you may need to install it separately.</Info>
+  </Step>
+
+  <Step title="Install Java 25">
+    You still need Java 25 installed to run the Spring Boot application locally:
+
+    ```bash
+    # Verify Java installation
+    java -version
+    ```
+
+    See the [local development guide](/deployment/local-development#prerequisites) for detailed Java installation instructions.
+  </Step>
+</Steps>
+
+## Docker Compose configuration
+
+OrgStack includes a `docker-compose.yml` file that defines the PostgreSQL database service:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    container_name: orgstack-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: orgstack
+      POSTGRES_USER: orgstack
+      POSTGRES_PASSWORD: orgstack_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - orgstack_pg_data:/var/lib/postgresql/data
+volumes:
+  orgstack_pg_data:
+```
+
+<Note>This configuration creates a PostgreSQL 16 container with persistent storage using a Docker volume named `orgstack_pg_data`.</Note>
+
+## Starting the database
+
+From the root directory of the project, start the PostgreSQL container:
+
+<CodeGroup>
+```bash Start in foreground
+docker compose up
+```
+
+```bash Start in background (detached)
+docker compose up -d
+```
+</CodeGroup>
+
+Docker will:
+1. Pull the PostgreSQL 16 image if not already downloaded
+2. Create a container named `orgstack-postgres`
+3. Initialize the database with the specified credentials
+4. Expose PostgreSQL on port 5432
+
+<Tip>Use the `-d` flag to run the container in the background. You can view logs anytime with `docker compose logs -f`.</Tip>
+
+## Verify the database is running
+
+Check that the PostgreSQL container is running:
+
+```bash
+docker compose ps
+```
+
+You should see output similar to:
+
+```
+NAME                  IMAGE         STATUS         PORTS
+orgstack-postgres     postgres:16   Up 2 minutes   0.0.0.0:5432->5432/tcp
+```
+
+<Steps>
+  <Step title="Test the connection">
+    Connect to the database using the PostgreSQL client:
+
+    ```bash
+    docker compose exec postgres psql -U orgstack -d orgstack
+    ```
+
+    You should see the PostgreSQL prompt. Exit with `\q`.
+  </Step>
+
+  <Step title="View logs">
+    Check the PostgreSQL logs to ensure it started correctly:
+
+    ```bash
+    docker compose logs postgres
+    ```
+  </Step>
+</Steps>
+
+## Running the Spring Boot application
+
+With PostgreSQL running in Docker, you can start the Spring Boot application locally:
+
+<CodeGroup>
+```bash Maven wrapper
+cd backend
+./mvnw spring-boot:run
+```
+
+```bash Maven
+cd backend
+mvn spring-boot:run
+```
+</CodeGroup>
+
+The application will connect to the PostgreSQL container using the configuration in `application.properties`:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/orgstack
+spring.datasource.username=orgstack
+spring.datasource.password=orgstack_dev_password
+```
+
+<Info>The Spring Boot application runs on your host machine and connects to the containerized database on `localhost:5432`.</Info>
+
+## Managing the Docker containers
+
+<AccordionGroup>
+  <Accordion title="Stop the containers">
+    ```bash
+    docker compose stop
+    ```
+
+    This stops the containers but preserves data in the volumes.
+  </Accordion>
+
+  <Accordion title="Start stopped containers">
+    ```bash
+    docker compose start
+    ```
+  </Accordion>
+
+  <Accordion title="Stop and remove containers">
+    ```bash
+    docker compose down
+    ```
+
+    <Warning>This removes the containers but keeps the data volume. Your database data is preserved.</Warning>
+  </Accordion>
+
+  <Accordion title="Remove everything including data">
+    ```bash
+    docker compose down -v
+    ```
+
+    <Warning>The `-v` flag removes the volume, deleting all database data. Use with caution!</Warning>
+  </Accordion>
+
+  <Accordion title="View logs">
+    ```bash
+    # Follow logs in real-time
+    docker compose logs -f
+
+    # View logs for specific service
+    docker compose logs postgres
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Persisting data
+
+The Docker Compose configuration uses a named volume `orgstack_pg_data` to persist database data:
+
+```yaml
+volumes:
+  - orgstack_pg_data:/var/lib/postgresql/data
+```
+
+This means:
+- Data survives container restarts
+- Data persists when you run `docker compose down`
+- Data is only deleted with `docker compose down -v`
+
+<Tip>To view all Docker volumes: `docker volume ls`</Tip>
+
+## Database backup and restore
+
+<Steps>
+  <Step title="Create a backup">
+    ```bash
+    docker compose exec postgres pg_dump -U orgstack orgstack > backup.sql
+    ```
+
+    This creates a SQL dump of the database in `backup.sql`.
+  </Step>
+
+  <Step title="Restore from backup">
+    ```bash
+    docker compose exec -T postgres psql -U orgstack orgstack < backup.sql
+    ```
+
+    <Warning>This will overwrite existing data in the database.</Warning>
+  </Step>
+</Steps>
+
+## Containerizing the Spring Boot application
+
+While the current setup runs PostgreSQL in Docker and the application on your host, you can containerize the entire application:
+
+<Steps>
+  <Step title="Create a Dockerfile">
+    Create `backend/Dockerfile`:
+
+    ```dockerfile
+    FROM eclipse-temurin:25-jdk-alpine AS build
+    WORKDIR /app
+    COPY pom.xml mvnw ./
+    COPY .mvn .mvn
+    RUN ./mvnw dependency:go-offline
+    COPY src src
+    RUN ./mvnw package -DskipTests
+
+    FROM eclipse-temurin:25-jre-alpine
+    WORKDIR /app
+    COPY --from=build /app/target/*.jar app.jar
+    EXPOSE 8080
+    ENTRYPOINT ["java", "-jar", "app.jar"]
+    ```
+  </Step>
+
+  <Step title="Add to docker-compose.yml">
+    Extend the Docker Compose configuration to include the backend:
+
+    ```yaml
+    services:
+      postgres:
+        # ... existing postgres config ...
+
+      backend:
+        build: ./backend
+        container_name: orgstack-backend
+        restart: unless-stopped
+        ports:
+          - "8080:8080"
+        environment:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orgstack
+          SPRING_DATASOURCE_USERNAME: orgstack
+          SPRING_DATASOURCE_PASSWORD: orgstack_dev_password
+        depends_on:
+          - postgres
+    ```
+
+    <Note>When services communicate within Docker Compose, use the service name (e.g., `postgres`) as the hostname instead of `localhost`.</Note>
+  </Step>
+
+  <Step title="Run the full stack">
+    ```bash
+    docker compose up --build
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port 5432 already in use">
+    If you have PostgreSQL installed locally and running, it may conflict with the Docker container. Either:
+
+    1. Stop the local PostgreSQL service:
+       ```bash
+       # macOS
+       brew services stop postgresql@16
+
+       # Linux
+       sudo systemctl stop postgresql
+       ```
+
+    2. Or change the port mapping in `docker-compose.yml`:
+       ```yaml
+       ports:
+         - "5433:5432"  # Map to host port 5433
+       ```
+
+       Then update `application.properties`:
+       ```properties
+       spring.datasource.url=jdbc:postgresql://localhost:5433/orgstack
+       ```
+  </Accordion>
+
+  <Accordion title="Cannot connect to database">
+    Ensure the container is running:
+
+    ```bash
+    docker compose ps
+    ```
+
+    Check the logs for errors:
+
+    ```bash
+    docker compose logs postgres
+    ```
+
+    Verify the connection parameters match between `docker-compose.yml` and `application.properties`.
+  </Accordion>
+
+  <Accordion title="Database data is lost after restart">
+    Ensure you're using `docker compose stop` or `docker compose down` without the `-v` flag. Using `-v` removes the data volume:
+
+    ```bash
+    # Preserves data
+    docker compose down
+
+    # Deletes data
+    docker compose down -v
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Local development" icon="laptop-code" href="/deployment/local-development">
+    Set up for development without Docker
+  </Card>
+  <Card title="Production deployment" icon="server" href="/deployment/production">
+    Deploy OrgStack to production
+  </Card>
+</CardGroup>

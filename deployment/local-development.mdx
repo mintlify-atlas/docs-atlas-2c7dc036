@@ -1,0 +1,239 @@
+---
+title: Local development setup
+description: Set up your local development environment for OrgStack
+---
+
+This guide walks you through setting up OrgStack for local development on your machine.
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+<Steps>
+  <Step title="Install Java 25">
+    OrgStack requires Java 25. Download and install it from [Oracle](https://www.oracle.com/java/technologies/downloads/) or use a package manager:
+
+    ```bash
+    # macOS with Homebrew
+    brew install openjdk@25
+
+    # Linux (Ubuntu/Debian)
+    sudo apt update
+    sudo apt install openjdk-25-jdk
+    ```
+
+    Verify your installation:
+
+    ```bash
+    java -version
+    ```
+
+    <Info>The output should show Java version 25 or higher.</Info>
+  </Step>
+
+  <Step title="Install Maven">
+    Maven is used for building and managing dependencies. You can use the Maven wrapper included in the project, or install Maven globally:
+
+    ```bash
+    # macOS with Homebrew
+    brew install maven
+
+    # Linux (Ubuntu/Debian)
+    sudo apt install maven
+    ```
+
+    <Tip>The project includes Maven wrapper scripts (`mvnw` and `mvnw.cmd`), so you don't need to install Maven separately if you prefer to use the wrapper.</Tip>
+  </Step>
+
+  <Step title="Install PostgreSQL">
+    You need PostgreSQL 16 or higher for the database:
+
+    ```bash
+    # macOS with Homebrew
+    brew install postgresql@16
+    brew services start postgresql@16
+
+    # Linux (Ubuntu/Debian)
+    sudo apt update
+    sudo apt install postgresql-16
+    sudo systemctl start postgresql
+    ```
+
+    Alternatively, you can use Docker to run PostgreSQL (see the [Docker setup guide](/deployment/docker)).
+  </Step>
+</Steps>
+
+## Database setup
+
+Create the database and user for OrgStack:
+
+<Steps>
+  <Step title="Connect to PostgreSQL">
+    ```bash
+    psql -U postgres
+    ```
+  </Step>
+
+  <Step title="Create database and user">
+    ```sql
+    CREATE DATABASE orgstack;
+    CREATE USER orgstack WITH PASSWORD 'orgstack_dev_password';
+    GRANT ALL PRIVILEGES ON DATABASE orgstack TO orgstack;
+    ```
+
+    <Warning>The password `orgstack_dev_password` is for local development only. Never use this password in production.</Warning>
+  </Step>
+
+  <Step title="Exit PostgreSQL">
+    ```sql
+    \q
+    ```
+  </Step>
+</Steps>
+
+## Configuration
+
+The default configuration in `backend/src/main/resources/application.properties` is set up for local development:
+
+```properties
+spring.application.name=backend
+
+# --- Datasource ---
+spring.datasource.url=jdbc:postgresql://localhost:5432/orgstack
+spring.datasource.username=orgstack
+spring.datasource.password=orgstack_dev_password
+
+# --- JPA ---
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.format_sql=false
+spring.jpa.open-in-view=false
+
+# -- Server
+server.port=8080
+```
+
+<Info>You can override these settings using environment variables or by creating an `application-local.properties` file.</Info>
+
+## Running the application
+
+You have two options for running the Spring Boot application:
+
+<CodeGroup>
+```bash Maven wrapper (recommended)
+cd backend
+./mvnw spring-boot:run
+```
+
+```bash Maven
+cd backend
+mvn spring-boot:run
+```
+</CodeGroup>
+
+The application will start on `http://localhost:8080`.
+
+<Tip>Use `./mvnw clean install` to build the project and run tests before starting the application.</Tip>
+
+## Verify the setup
+
+Once the application is running, you can verify it's working:
+
+<Steps>
+  <Step title="Check the health endpoint">
+    ```bash
+    curl http://localhost:8080/actuator/health
+    ```
+
+    You should receive a response indicating the application is up:
+
+    ```json
+    {"status":"UP"}
+    ```
+  </Step>
+
+  <Step title="Check the logs">
+    Review the console output for any errors or warnings. The application should start without issues if the database connection is successful.
+  </Step>
+</Steps>
+
+## Development workflow
+
+<Steps>
+  <Step title="Make code changes">
+    Edit the source code in your preferred IDE or text editor.
+  </Step>
+
+  <Step title="Rebuild and restart">
+    Stop the application (Ctrl+C) and restart it with `./mvnw spring-boot:run` to see your changes.
+
+    <Tip>Consider using Spring Boot DevTools for automatic restarts during development. Add it as a dependency in `pom.xml` for a faster development cycle.</Tip>
+  </Step>
+
+  <Step title="Run tests">
+    ```bash
+    ./mvnw test
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection refused to PostgreSQL">
+    Ensure PostgreSQL is running:
+
+    ```bash
+    # macOS
+    brew services list
+
+    # Linux
+    sudo systemctl status postgresql
+    ```
+
+    Check that the database exists and the user has proper permissions:
+
+    ```bash
+    psql -U orgstack -d orgstack -h localhost
+    ```
+  </Accordion>
+
+  <Accordion title="Java version mismatch">
+    OrgStack requires Java 25. Check your Java version:
+
+    ```bash
+    java -version
+    ```
+
+    If you have multiple Java versions installed, set `JAVA_HOME` to point to Java 25:
+
+    ```bash
+    export JAVA_HOME=/path/to/java-25
+    ```
+  </Accordion>
+
+  <Accordion title="Port 8080 already in use">
+    If another application is using port 8080, you can change the port in `application.properties`:
+
+    ```properties
+    server.port=8081
+    ```
+
+    Or set it as an environment variable:
+
+    ```bash
+    SERVER_PORT=8081 ./mvnw spring-boot:run
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Docker setup" icon="docker" href="/deployment/docker">
+    Use Docker Compose for containerized development
+  </Card>
+  <Card title="Production deployment" icon="server" href="/deployment/production">
+    Learn how to deploy OrgStack to production
+  </Card>
+</CardGroup>

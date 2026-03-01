@@ -1,0 +1,355 @@
+---
+title: Authorization
+description: Learn how OrgStack implements role-based access control (RBAC) for fine-grained permissions
+---
+
+## Overview
+
+OrgStack implements **Role-Based Access Control (RBAC)** to manage what authenticated users can do within their organization. After you authenticate (proving who you are), authorization determines what actions you're allowed to perform.
+
+## RBAC fundamentals
+
+OrgStack's authorization model has three core concepts:
+
+<CardGroup cols={3}>
+  <Card title="Users" icon="user">
+    Individual people who authenticate to the system
+  </Card>
+  <Card title="Roles" icon="shield">
+    Named collections of permissions (e.g., ADMIN, MANAGER, USER)
+  </Card>
+  <Card title="Permissions" icon="key">
+    Specific actions users can perform (e.g., CREATE_USER, DELETE_PROJECT)
+  </Card>
+</CardGroup>
+
+## How authorization works
+
+<Steps>
+  <Step title="User authenticates">
+    You log in and receive a JWT token containing your roles for your organization.
+  </Step>
+  
+  <Step title="Request includes token">
+    Your client includes the JWT in the `Authorization` header.
+  </Step>
+  
+  <Step title="Spring Security extracts roles">
+    The JWT filter parses your token and creates a `SecurityContext` with your roles.
+  </Step>
+  
+  <Step title="Authorization check">
+    Spring Security checks if your roles grant permission for the requested endpoint.
+  </Step>
+  
+  <Step title="Access granted or denied">
+    If authorized, the request proceeds. Otherwise, you receive 403 Forbidden.
+  </Step>
+</Steps>
+
+## Role hierarchy
+
+OrgStack implements a hierarchical role structure where higher roles inherit permissions from lower roles:
+
+```
+SYSTEM_ADMIN (platform-level, across all tenants)
+    |
+    └─ ORGANIZATION_ADMIN (full control within organization)
+           |
+           ├─ MANAGER (manage users and projects)
+           │      |
+           │      └─ USER (basic access)
+           │             |
+           │             └─ GUEST (read-only)
+           │
+           └─ AUDITOR (read-only across all data)
+```
+
+<Warning>
+Roles are scoped to organizations. An ADMIN in Organization A has no privileges in Organization B. The only exception is SYSTEM_ADMIN, which should be used sparingly.
+</Warning>
+
+## Protecting endpoints
+
+Spring Security provides multiple ways to protect your REST endpoints:
+
+### Method security
+
+Use annotations on controller methods:
+
+```java
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+    
+    @GetMapping
+    @PreAuthorize("hasRole('USER')")
+    public List<User> listUsers() {
+        // All authenticated users can list users in their org
+    }
+    
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public User createUser(@RequestBody CreateUserRequest request) {
+        // Only admins can create users
+    }
+    
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') and #id != authentication.principal.id")
+    public void deleteUser(@PathVariable UUID id) {
+        // Admins can delete users, but not themselves
+    }
+}
+```
+
+### Path-based security
+
+Configure security rules in your security configuration:
+
+```java
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+public class SecurityConfig {
+    
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) {
+        http
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/auth/**").permitAll()
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/**").hasRole("USER")
+                .anyRequest().authenticated()
+            );
+        return http.build();
+    }
+}
+```
+
+<Info>
+Method-level security with `@PreAuthorize` is more flexible and easier to test than path-based rules. Use it for fine-grained authorization logic.
+</Info>
+
+## Permission checks in services
+
+Authorization shouldn't stop at the controller layer. Service methods should also validate permissions:
+
+```java
+@Service
+public class ProjectService {
+    
+    public Project updateProject(UUID projectId, UpdateProjectRequest request) {
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new NotFoundException("Project not found"));
+        
+        // Verify the project belongs to the current user's organization
+        UUID currentOrgId = SecurityContext.getCurrentOrganizationId();
+        if (!project.getOrganizationId().equals(currentOrgId)) {
+            throw new ForbiddenException("Cannot access project from different organization");
+        }
+        
+        // Verify the user has permission to update this project
+        if (!SecurityContext.hasRole("ADMIN") && 
+            !project.getOwnerId().equals(SecurityContext.getCurrentUserId())) {
+            throw new ForbiddenException("Only project owners or admins can update projects");
+        }
+        
+        // Proceed with update
+        return projectRepository.save(project);
+    }
+}
+```
+
+## Organization-scoped roles
+
+Roles in OrgStack are always scoped to an organization. The database schema enforces this:
+
+```sql
+CREATE TABLE user_roles (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id),
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    role VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, organization_id, role)
+);
+```
+
+<Note>
+A user can have different roles in different organizations. For example, you might be an ADMIN in Organization A and a USER in Organization B.
+</Note>
+
+## Custom permissions
+
+Beyond predefined roles, you can implement custom permissions for fine-grained control:
+
+```java
+public enum Permission {
+    // User management
+    USER_CREATE,
+    USER_READ,
+    USER_UPDATE,
+    USER_DELETE,
+    
+    // Project management
+    PROJECT_CREATE,
+    PROJECT_READ,
+    PROJECT_UPDATE,
+    PROJECT_DELETE,
+    
+    // Billing
+    BILLING_READ,
+    BILLING_MANAGE,
+    
+    // Admin
+    ORG_SETTINGS_MANAGE,
+    ROLE_ASSIGN
+}
+```
+
+Map permissions to roles:
+
+```java
+public enum Role {
+    ADMIN(Permission.values()), // All permissions
+    MANAGER(Permission.USER_READ, Permission.USER_UPDATE, 
+            Permission.PROJECT_CREATE, Permission.PROJECT_READ,
+            Permission.PROJECT_UPDATE),
+    USER(Permission.PROJECT_READ, Permission.USER_READ),
+    GUEST(Permission.PROJECT_READ);
+    
+    private final Set<Permission> permissions;
+}
+```
+
+## Testing authorization
+
+Spring Security provides test utilities for verifying authorization rules:
+
+```java
+@SpringBootTest
+@AutoConfigureMockMvc
+class AuthorizationTests {
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @Test
+    @WithMockUser(roles = "USER")
+    void userCannotAccessAdminEndpoint() throws Exception {
+        mockMvc.perform(delete("/api/users/123"))
+            .andExpect(status().isForbidden());
+    }
+    
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void adminCanDeleteUsers() throws Exception {
+        mockMvc.perform(delete("/api/users/123"))
+            .andExpect(status().isOk());
+    }
+}
+```
+
+## Audit logging
+
+OrgStack automatically tracks when entities are created and modified using JPA auditing:
+
+```java BaseEntity.java
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+@Getter
+public class BaseEntity {
+    @CreatedDate
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+    
+    @LastModifiedDate
+    @Column(nullable = false)
+    private Instant updatedAt;
+}
+```
+
+To track who performed actions, extend this with user auditing:
+
+```java
+@CreatedBy
+@Column(nullable = false, updatable = false)
+private UUID createdBy;
+
+@LastModifiedBy
+@Column(nullable = false)
+private UUID lastModifiedBy;
+```
+
+<Info>
+Implement `AuditorAware<UUID>` to automatically populate `createdBy` and `lastModifiedBy` from the current security context.
+</Info>
+
+## Best practices
+
+<Steps>
+  <Step title="Fail securely">
+    When in doubt, deny access. It's better to be too restrictive than too permissive.
+  </Step>
+  
+  <Step title="Check at multiple layers">
+    Validate authorization at both controller and service layers. Defense in depth prevents security gaps.
+  </Step>
+  
+  <Step title="Use explicit role checks">
+    Avoid generic `isAuthenticated()` checks. Be specific about which roles can perform which actions.
+  </Step>
+  
+  <Step title="Test negative cases">
+    Write tests that verify unauthorized users are blocked, not just that authorized users succeed.
+  </Step>
+  
+  <Step title="Audit sensitive operations">
+    Log all administrative actions (user creation, role changes, deletions) for compliance and security.
+  </Step>
+</Steps>
+
+## Common authorization patterns
+
+<Accordion title="Resource ownership">
+  Users can only modify resources they own, unless they're admins:
+  ```java
+  @PreAuthorize("hasRole('ADMIN') or @projectSecurity.isOwner(#projectId)")
+  ```
+</Accordion>
+
+<Accordion title="Organization membership">
+  Users can only access resources within their organization:
+  ```java
+  if (!resource.getOrganizationId().equals(getCurrentOrgId())) {
+      throw new ForbiddenException();
+  }
+  ```
+</Accordion>
+
+<Accordion title="Feature flags">
+  Enable features based on organization plan or user role:
+  ```java
+  @PreAuthorize("@featureService.isEnabled('ADVANCED_ANALYTICS', #orgId)")
+  ```
+</Accordion>
+
+<Accordion title="Time-based access">
+  Restrict access based on user account status or trial expiration:
+  ```java
+  if (user.getAccountStatus() != AccountStatus.ACTIVE) {
+      throw new AccountInactiveException();
+  }
+  ```
+</Accordion>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/concepts/authentication">
+    Learn how users prove their identity
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/concepts/architecture">
+    Understand how authorization fits in the layered architecture
+  </Card>
+</CardGroup>

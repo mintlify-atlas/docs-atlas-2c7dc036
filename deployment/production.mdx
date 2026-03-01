@@ -1,0 +1,514 @@
+---
+title: Production deployment
+description: Best practices and considerations for deploying OrgStack to production
+---
+
+This guide covers important considerations and best practices for deploying OrgStack in a production environment.
+
+## Environment configuration
+
+Never hardcode credentials or sensitive configuration in production. Use environment variables to configure your application.
+
+### Database connection
+
+Override the default configuration using environment variables:
+
+```bash
+# Database connection
+export SPRING_DATASOURCE_URL=jdbc:postgresql://your-db-host:5432/orgstack_prod
+export SPRING_DATASOURCE_USERNAME=orgstack_prod_user
+export SPRING_DATASOURCE_PASSWORD=your-secure-password
+
+# Server configuration
+export SERVER_PORT=8080
+```
+
+<Warning>Never commit production credentials to version control. Use secret management services like AWS Secrets Manager, HashiCorp Vault, or your cloud provider's equivalent.</Warning>
+
+### JPA and Hibernate configuration
+
+The default `application.properties` is already configured for production with `spring.jpa.hibernate.ddl-auto=validate`:
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+<Note>The `validate` setting ensures Hibernate validates the database schema against your entities but doesn't make any changes. This prevents accidental schema modifications in production.</Note>
+
+<AccordionGroup>
+  <Accordion title="Understanding ddl-auto options">
+    - **`validate`** (recommended for production): Validates the schema, makes no changes to the database
+    - **`update`**: Updates the schema if necessary (risky in production)
+    - **`create`**: Creates the schema, destroying previous data (never use in production)
+    - **`create-drop`**: Creates the schema, drops it when SessionFactory closes (for testing only)
+    - **`none`**: Does nothing with the schema
+
+    <Warning>Never use `create`, `create-drop`, or `update` in production. Always use `validate` or `none`.</Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Database setup
+
+<Steps>
+  <Step title="Use a managed database service">
+    For production, use a managed PostgreSQL service from your cloud provider:
+
+    - **AWS**: Amazon RDS for PostgreSQL
+    - **Google Cloud**: Cloud SQL for PostgreSQL
+    - **Azure**: Azure Database for PostgreSQL
+    - **DigitalOcean**: Managed Databases
+    - **Heroku**: Heroku Postgres
+
+    Managed services provide automatic backups, high availability, and maintenance.
+  </Step>
+
+  <Step title="Configure connection pooling">
+    Spring Boot uses HikariCP by default for connection pooling. Configure it for production workloads:
+
+    ```properties
+    # Connection pool configuration
+    spring.datasource.hikari.maximum-pool-size=10
+    spring.datasource.hikari.minimum-idle=5
+    spring.datasource.hikari.connection-timeout=30000
+    spring.datasource.hikari.idle-timeout=600000
+    spring.datasource.hikari.max-lifetime=1800000
+    ```
+
+    Or using environment variables:
+
+    ```bash
+    export SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=10
+    export SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE=5
+    export SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT=30000
+    ```
+
+    <Tip>Adjust `maximum-pool-size` based on your expected load and database connection limits.</Tip>
+  </Step>
+
+  <Step title="Use SSL for database connections">
+    Enable SSL for secure database connections:
+
+    ```properties
+    spring.datasource.url=jdbc:postgresql://your-db-host:5432/orgstack_prod?sslmode=require
+    ```
+
+    <Info>Most managed database services require or strongly recommend SSL connections.</Info>
+  </Step>
+</Steps>
+
+## Database migrations
+
+Since `ddl-auto` is set to `validate`, you need a migration strategy for schema changes:
+
+<Steps>
+  <Step title="Use Flyway or Liquibase">
+    Add a database migration tool to manage schema changes:
+
+    **Flyway** (recommended for Spring Boot):
+
+    ```xml
+    <dependency>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    ```
+
+    Create migration scripts in `src/main/resources/db/migration/`:
+
+    ```
+    db/migration/
+    ├── V1__initial_schema.sql
+    ├── V2__add_organizations_table.sql
+    └── V3__add_users_table.sql
+    ```
+  </Step>
+
+  <Step title="Version your migrations">
+    Use semantic versioning for migration files:
+
+    - `V1__description.sql` - First migration
+    - `V2__description.sql` - Second migration
+    - `V3__description.sql` - Third migration
+
+    <Warning>Never modify a migration that has already been applied to production. Always create a new migration to make additional changes.</Warning>
+  </Step>
+</Steps>
+
+## Security considerations
+
+<Steps>
+  <Step title="Use strong passwords">
+    Generate strong, unique passwords for database users:
+
+    ```bash
+    # Generate a secure password (Linux/macOS)
+    openssl rand -base64 32
+    ```
+
+    <Warning>The development password `orgstack_dev_password` from `application.properties` must never be used in production.</Warning>
+  </Step>
+
+  <Step title="Restrict database access">
+    Configure your database firewall to only allow connections from your application servers:
+
+    - Use security groups (AWS) or firewall rules (GCP, Azure)
+    - Whitelist only your application server IPs
+    - Never expose PostgreSQL directly to the internet
+  </Step>
+
+  <Step title="Enable Spring Security">
+    OrgStack includes Spring Security. Configure authentication and authorization for your endpoints:
+
+    ```java
+    @Configuration
+    @EnableWebSecurity
+    public class SecurityConfig {
+        // Configure security rules
+    }
+    ```
+
+    <Note>Review and configure Spring Security settings appropriate for your use case before deploying to production.</Note>
+  </Step>
+
+  <Step title="Use HTTPS">
+    Always use HTTPS in production. Configure your reverse proxy (nginx, Apache) or cloud load balancer to handle SSL/TLS termination.
+  </Step>
+</Steps>
+
+## Building for production
+
+Create an optimized production build:
+
+<CodeGroup>
+```bash Maven wrapper
+cd backend
+./mvnw clean package -DskipTests
+```
+
+```bash Maven
+cd backend
+mvn clean package -DskipTests
+```
+</CodeGroup>
+
+This creates an executable JAR in `target/backend-0.0.1-SNAPSHOT.jar`.
+
+<Tip>Run tests in your CI/CD pipeline before building the production artifact. The `-DskipTests` flag is used here for faster builds when tests have already passed.</Tip>
+
+## Running in production
+
+<Tabs>
+  <Tab title="Standalone JAR">
+    Run the Spring Boot application as a standalone JAR:
+
+    ```bash
+    java -jar -Xmx512m -Xms256m \
+      -Dspring.profiles.active=production \
+      backend-0.0.1-SNAPSHOT.jar
+    ```
+
+    <Info>Adjust JVM memory settings (`-Xmx`, `-Xms`) based on your server resources and application needs.</Info>
+  </Tab>
+
+  <Tab title="Systemd service (Linux)">
+    Create a systemd service for automatic startup:
+
+    Create `/etc/systemd/system/orgstack.service`:
+
+    ```ini
+    [Unit]
+    Description=OrgStack Application
+    After=network.target
+
+    [Service]
+    Type=simple
+    User=orgstack
+    WorkingDirectory=/opt/orgstack
+    ExecStart=/usr/bin/java -jar -Xmx512m /opt/orgstack/backend.jar
+    Restart=on-failure
+    RestartSec=10
+
+    Environment="SPRING_DATASOURCE_URL=jdbc:postgresql://db-host:5432/orgstack_prod"
+    Environment="SPRING_DATASOURCE_USERNAME=orgstack_prod"
+    Environment="SPRING_DATASOURCE_PASSWORD=your-secure-password"
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+    Enable and start the service:
+
+    ```bash
+    sudo systemctl enable orgstack
+    sudo systemctl start orgstack
+    sudo systemctl status orgstack
+    ```
+  </Tab>
+
+  <Tab title="Docker">
+    Use Docker for containerized deployment:
+
+    ```dockerfile
+    FROM eclipse-temurin:25-jre-alpine
+    WORKDIR /app
+    COPY target/backend-*.jar app.jar
+    
+    EXPOSE 8080
+    
+    ENTRYPOINT ["java", \
+      "-Xmx512m", \
+      "-XX:+UseContainerSupport", \
+      "-jar", "app.jar"]
+    ```
+
+    Build and run:
+
+    ```bash
+    docker build -t orgstack:latest .
+    docker run -d \
+      -p 8080:8080 \
+      -e SPRING_DATASOURCE_URL=jdbc:postgresql://db-host:5432/orgstack_prod \
+      -e SPRING_DATASOURCE_USERNAME=orgstack_prod \
+      -e SPRING_DATASOURCE_PASSWORD=your-secure-password \
+      --name orgstack \
+      orgstack:latest
+    ```
+  </Tab>
+
+  <Tab title="Kubernetes">
+    Deploy to Kubernetes with proper secrets management:
+
+    ```yaml
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: orgstack-db-secret
+    type: Opaque
+    stringData:
+      database-url: jdbc:postgresql://db-host:5432/orgstack_prod
+      database-username: orgstack_prod
+      database-password: your-secure-password
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: orgstack
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: orgstack
+      template:
+        metadata:
+          labels:
+            app: orgstack
+        spec:
+          containers:
+          - name: orgstack
+            image: orgstack:latest
+            ports:
+            - containerPort: 8080
+            env:
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: orgstack-db-secret
+                  key: database-url
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: orgstack-db-secret
+                  key: database-username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: orgstack-db-secret
+                  key: database-password
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "500m"
+              limits:
+                memory: "1Gi"
+                cpu: "1000m"
+    ```
+  </Tab>
+</Tabs>
+
+## Monitoring and observability
+
+Spring Boot Actuator is already included in the `pom.xml`. Configure it for production:
+
+```properties
+# Actuator configuration
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+management.endpoint.health.show-details=when-authorized
+management.metrics.export.prometheus.enabled=true
+```
+
+<Steps>
+  <Step title="Health checks">
+    Use the health endpoint for liveness and readiness probes:
+
+    ```bash
+    curl http://localhost:8080/actuator/health
+    ```
+
+    <Tip>In Kubernetes, configure liveness and readiness probes to use this endpoint.</Tip>
+  </Step>
+
+  <Step title="Metrics">
+    Collect and monitor metrics using Prometheus:
+
+    ```bash
+    curl http://localhost:8080/actuator/prometheus
+    ```
+
+    Configure Prometheus to scrape this endpoint for metrics.
+  </Step>
+
+  <Step title="Application logs">
+    Configure structured logging in production:
+
+    ```properties
+    logging.level.root=INFO
+    logging.level.com.orgstack=INFO
+    logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n
+    # JSON logging for log aggregation
+    logging.file.name=/var/log/orgstack/application.log
+    ```
+
+    Use a log aggregation service like ELK Stack, Splunk, or your cloud provider's logging service.
+  </Step>
+</Steps>
+
+## Backup and disaster recovery
+
+<Steps>
+  <Step title="Regular database backups">
+    Configure automated backups:
+
+    - Use your managed database service's backup feature
+    - Set retention period (e.g., 30 days)
+    - Enable point-in-time recovery if available
+    - Test restore procedures regularly
+  </Step>
+
+  <Step title="Application state">
+    Ensure your application is stateless:
+
+    - Store session data in Redis or a database
+    - Use external storage for file uploads (S3, Cloud Storage)
+    - Design for horizontal scaling
+  </Step>
+
+  <Step title="Disaster recovery plan">
+    Document and test your disaster recovery procedures:
+
+    1. Database restore process
+    2. Application redeployment steps
+    3. DNS failover procedures
+    4. Communication plan for stakeholders
+  </Step>
+</Steps>
+
+## Performance optimization
+
+<AccordionGroup>
+  <Accordion title="JVM tuning">
+    Optimize JVM settings for your workload:
+
+    ```bash
+    java -jar \
+      -Xmx1g -Xms1g \
+      -XX:+UseG1GC \
+      -XX:MaxGCPauseMillis=200 \
+      -XX:+UseStringDeduplication \
+      app.jar
+    ```
+  </Accordion>
+
+  <Accordion title="Database indexing">
+    Add indexes for frequently queried columns:
+
+    ```sql
+    CREATE INDEX idx_organization_name ON organizations(name);
+    CREATE INDEX idx_user_email ON users(email);
+    ```
+
+    Monitor slow queries and add indexes as needed.
+  </Accordion>
+
+  <Accordion title="Caching">
+    Implement caching for frequently accessed data:
+
+    ```xml
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-cache</artifactId>
+    </dependency>
+    ```
+
+    Use Redis or Caffeine for distributed caching.
+  </Accordion>
+</AccordionGroup>
+
+## Scaling considerations
+
+<Steps>
+  <Step title="Horizontal scaling">
+    Run multiple instances behind a load balancer:
+
+    - Use a cloud load balancer (ALB, Cloud Load Balancing)
+    - Configure health checks
+    - Use session affinity if needed (or make the app stateless)
+  </Step>
+
+  <Step title="Database scaling">
+    As your application grows:
+
+    - Use read replicas for read-heavy workloads
+    - Implement connection pooling (HikariCP is already configured)
+    - Consider database sharding for very large datasets
+  </Step>
+
+  <Step title="Auto-scaling">
+    Configure auto-scaling based on metrics:
+
+    - CPU utilization
+    - Memory usage
+    - Request count
+    - Response time
+  </Step>
+</Steps>
+
+## Checklist for production deployment
+
+Before deploying to production, verify:
+
+- [ ] Database credentials are stored in secrets manager
+- [ ] `spring.jpa.hibernate.ddl-auto` is set to `validate`
+- [ ] SSL/TLS is enabled for database connections
+- [ ] HTTPS is configured for all endpoints
+- [ ] Health checks are configured
+- [ ] Monitoring and alerting are set up
+- [ ] Automated backups are enabled
+- [ ] Log aggregation is configured
+- [ ] Security scanning has been performed
+- [ ] Load testing has been completed
+- [ ] Disaster recovery plan is documented and tested
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Local development" icon="laptop-code" href="/deployment/local-development">
+    Set up your local development environment
+  </Card>
+  <Card title="Docker setup" icon="docker" href="/deployment/docker">
+    Use Docker for development and testing
+  </Card>
+</CardGroup>

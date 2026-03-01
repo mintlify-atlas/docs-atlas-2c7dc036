@@ -1,0 +1,168 @@
+---
+title: Multi-tenancy
+description: Learn how OrgStack implements multi-tenant architecture with strict tenant isolation
+---
+
+## Overview
+
+OrgStack is built as a multi-tenant platform where multiple organizations share the same application infrastructure while maintaining complete data isolation. Each organization (tenant) operates independently with its own users, roles, and data.
+
+## Multi-tenant architecture
+
+The platform uses a **shared database, shared schema** approach with tenant discrimination at the application layer. This provides cost efficiency while ensuring strict tenant boundaries through code-level isolation.
+
+<Info>
+Every entity in OrgStack includes a tenant identifier to ensure data is properly scoped to the correct organization.
+</Info>
+
+## Tenant isolation strategy
+
+OrgStack enforces tenant isolation through multiple layers:
+
+<Steps>
+  <Step title="Request context">
+    When you authenticate, your JWT token contains the organization ID. Spring Security extracts this and stores it in the request context.
+  </Step>
+  
+  <Step title="Service layer filtering">
+    All service methods automatically filter data by the current tenant. You never query across tenant boundaries.
+  </Step>
+  
+  <Step title="Repository constraints">
+    JPA repositories include tenant ID in all queries. Custom query methods enforce `WHERE organizationId = :tenantId` clauses.
+  </Step>
+  
+  <Step title="Entity validation">
+    Before persisting any entity, the system validates that it belongs to the authenticated tenant.
+  </Step>
+</Steps>
+
+## Base entity design
+
+All entities in OrgStack extend `BaseEntity`, which provides foundational fields for multi-tenant operation:
+
+```java BaseEntity.java
+package com.orgstack.common;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.MappedSuperclass;
+import lombok.Getter;
+
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+@Getter
+public class BaseEntity {
+    @Column(nullable = false, updatable = false)
+    private UUID id;
+    
+    @CreatedDate
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+    
+    @LastModifiedDate
+    @Column(nullable = false)
+    private Instant updatedAt;
+
+    protected BaseEntity() {
+        this.id = UUID.randomUUID();
+    }
+}
+```
+
+### Key features
+
+- **UUID primary keys**: Uses `UUID` instead of sequential IDs to prevent ID enumeration attacks across tenants
+- **Immutable ID**: The `updatable = false` constraint prevents ID changes after creation
+- **Audit timestamps**: Automatic `createdAt` and `updatedAt` tracking via JPA auditing
+- **Protected constructor**: Forces ID generation at instantiation time
+
+<Warning>
+When extending `BaseEntity`, always add an `organizationId` field with a NOT NULL constraint and foreign key to the organizations table. Never allow this field to be updated after creation.
+</Warning>
+
+## Tenant context propagation
+
+The tenant context flows through your application layers:
+
+<Accordion title="Controller layer">
+  Controllers extract the organization ID from the authenticated principal (JWT claims) and pass it explicitly to service methods, or rely on a tenant context holder.
+</Accordion>
+
+<Accordion title="Service layer">
+  Services validate that all operations are scoped to the current tenant. Cross-tenant operations are explicitly forbidden and throw security exceptions.
+</Accordion>
+
+<Accordion title="Repository layer">
+  Repositories add tenant filters to all queries. Spring Data JPA's `@Query` annotations include `WHERE organizationId = :orgId` clauses.
+</Accordion>
+
+## Database configuration
+
+OrgStack uses PostgreSQL with connection pooling optimized for multi-tenant workloads:
+
+```properties application.properties
+# Datasource
+spring.datasource.url=jdbc:postgresql://localhost:5432/orgstack
+spring.datasource.username=orgstack
+spring.datasource.password=orgstack_dev_password
+
+# JPA
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.format_sql=false
+spring.jpa.open-in-view=false
+```
+
+<Note>
+The `ddl-auto=validate` setting ensures schema changes happen through controlled migrations, not automatic Hibernate updates. This is critical for multi-tenant data integrity.
+</Note>
+
+## Tenant isolation checklist
+
+When implementing new features, ensure tenant isolation by verifying:
+
+- [ ] Entity includes `organizationId` column with NOT NULL constraint
+- [ ] Entity has foreign key relationship to `organizations` table
+- [ ] Repository queries filter by `organizationId`
+- [ ] Service methods validate tenant ownership before operations
+- [ ] Unit tests verify cross-tenant access is blocked
+- [ ] Integration tests confirm tenant data isolation
+
+## Best practices
+
+<Steps>
+  <Step title="Never trust client-provided tenant IDs">
+    Always derive the organization ID from the authenticated JWT token, never from request parameters or body.
+  </Step>
+  
+  <Step title="Use explicit tenant scoping">
+    Make tenant filtering explicit in your queries. Avoid relying solely on implicit context that might be bypassed.
+  </Step>
+  
+  <Step title="Test cross-tenant scenarios">
+    Write integration tests that attempt to access data from different tenants. These should always fail with security exceptions.
+  </Step>
+  
+  <Step title="Audit tenant boundaries">
+    Use database constraints and foreign keys to enforce tenant isolation at the database level as a defense-in-depth measure.
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/concepts/authentication">
+    Learn how JWT tokens carry tenant information
+  </Card>
+  <Card title="Authorization" icon="shield" href="/concepts/authorization">
+    Understand role-based access control within tenants
+  </Card>
+</CardGroup>

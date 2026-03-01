@@ -1,0 +1,202 @@
+---
+title: Audit logging
+description: Learn how OrgStack tracks entity changes with JPA auditing
+---
+
+OrgStack uses Spring Data JPA's auditing capabilities to automatically track when entities are created and modified. This provides a complete audit trail without requiring manual timestamp management.
+
+## How JPA auditing works
+
+JPA auditing automatically populates audit fields on your entities when they are persisted or updated. OrgStack implements this through three key components:
+
+<Steps>
+  <Step title="Enable JPA auditing">
+    The `@EnableJpaAuditing` annotation activates Spring Data JPA's auditing infrastructure:
+
+    ```java com/orgstack/config/JpaConfig.java
+    package com.orgstack.config;
+
+    import org.springframework.context.annotation.Configuration;
+    import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+
+    @Configuration
+    @EnableJpaAuditing
+    public class JpaConfig {
+    }
+    ```
+
+    This configuration tells Spring to scan for entities with auditing annotations and automatically populate their audit fields.
+  </Step>
+
+  <Step title="Create a base entity with audit fields">
+    The `BaseEntity` class provides common fields for all entities, including audit timestamps:
+
+    ```java com/orgstack/common/BaseEntity.java
+    package com.orgstack.common;
+
+    import java.time.Instant;
+    import java.util.UUID;
+
+    import org.springframework.data.annotation.CreatedDate;
+    import org.springframework.data.annotation.LastModifiedDate;
+    import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+    import jakarta.persistence.Column;
+    import jakarta.persistence.EntityListeners;
+    import jakarta.persistence.MappedSuperclass;
+    import lombok.Getter;
+
+    @MappedSuperclass
+    @EntityListeners(AuditingEntityListener.class)
+    @Getter
+    public class BaseEntity {
+        @Column(nullable = false, updatable = false)
+        private UUID id;
+        
+        @CreatedDate
+        @Column(nullable = false, updatable = false)
+        private Instant createdAt;
+        
+        @LastModifiedDate
+        @Column(nullable = false)
+        private Instant updatedAt;
+
+        protected BaseEntity() {
+            this.id = UUID.randomUUID();
+        }
+    }
+    ```
+
+    <Note>
+      The `@MappedSuperclass` annotation indicates that this class should not be mapped to its own database table, but its fields should be inherited by subclasses.
+    </Note>
+  </Step>
+
+  <Step title="Extend BaseEntity in your entities">
+    Any entity that extends `BaseEntity` automatically gets audit tracking:
+
+    ```java
+    @Entity
+    @Table(name = "organizations")
+    public class Organization extends BaseEntity {
+        @Column(nullable = false)
+        private String name;
+        
+        @Column(nullable = false, unique = true)
+        private String slug;
+        
+        // No need to manually manage createdAt or updatedAt
+    }
+    ```
+
+    When you save an organization, JPA automatically sets `createdAt` on insert and updates `updatedAt` on every modification.
+  </Step>
+</Steps>
+
+## Key auditing annotations
+
+### @EntityListeners
+
+```java
+@EntityListeners(AuditingEntityListener.class)
+```
+
+This annotation registers the `AuditingEntityListener`, which intercepts entity lifecycle events (persist, update) and populates audit fields. It's applied to `BaseEntity` so all subclasses inherit this behavior.
+
+### @CreatedDate
+
+```java
+@CreatedDate
+@Column(nullable = false, updatable = false)
+private Instant createdAt;
+```
+
+The `@CreatedDate` annotation automatically sets this field to the current timestamp when an entity is first persisted. The `updatable = false` constraint ensures it never changes after initial creation.
+
+### @LastModifiedDate
+
+```java
+@LastModifiedDate
+@Column(nullable = false)
+private Instant updatedAt;
+```
+
+The `@LastModifiedDate` annotation updates this field to the current timestamp whenever the entity is modified. This provides a complete audit trail of when changes occurred.
+
+## UUID-based identity
+
+OrgStack uses UUIDs instead of auto-incrementing integers for entity IDs:
+
+```java
+@Column(nullable = false, updatable = false)
+private UUID id;
+
+protected BaseEntity() {
+    this.id = UUID.randomUUID();
+}
+```
+
+<Info>
+  UUIDs are generated in the application layer (not the database) during entity construction. This approach has several benefits:
+  
+  - **Predictable IDs**: You know the entity ID before persisting to the database
+  - **No ID collisions**: Safe to generate IDs across distributed systems
+  - **Security**: Harder to enumerate resources compared to sequential integers
+</Info>
+
+## Using Instant for timestamps
+
+OrgStack uses `java.time.Instant` for all timestamp fields:
+
+```java
+private Instant createdAt;
+private Instant updatedAt;
+```
+
+<Tip>
+  `Instant` represents a point in time in UTC, making it timezone-independent. This is ideal for audit logs where you need precise, unambiguous timestamps regardless of user timezone.
+</Tip>
+
+## Benefits of automatic auditing
+
+<CardGroup cols={2}>
+  <Card title="Consistency" icon="check">
+    Every entity gets the same audit fields with the same behavior. No risk of forgetting to set timestamps manually.
+  </Card>
+  
+  <Card title="Accuracy" icon="clock">
+    Timestamps are set automatically by the framework at the exact moment of persistence, eliminating human error.
+  </Card>
+  
+  <Card title="Simplicity" icon="code">
+    Your service layer doesn't need timestamp management logic. Just save entities and JPA handles the rest.
+  </Card>
+  
+  <Card title="Compliance" icon="shield">
+    Immutable creation timestamps (`updatable = false`) provide tamper-proof audit records.
+  </Card>
+</CardGroup>
+
+## What gets audited automatically
+
+With this setup, you get automatic tracking for:
+
+- **Entity creation**: `createdAt` is set once when the entity is first saved
+- **Entity updates**: `updatedAt` is refreshed on every save operation
+- **Immutable records**: `createdAt` and `id` can never be changed after creation
+
+<Warning>
+  JPA auditing only tracks entity-level changes through JPA operations. Direct SQL updates or bulk operations may bypass auditing. Always use JPA repository methods when you need audit trails.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Tenant isolation" href="/guides/tenant-isolation" icon="building">
+    Learn how OrgStack isolates data between tenants
+  </Card>
+  
+  <Card title="JWT authentication" href="/guides/jwt-authentication" icon="key">
+    Understand how authentication works with Spring Security
+  </Card>
+</CardGroup>

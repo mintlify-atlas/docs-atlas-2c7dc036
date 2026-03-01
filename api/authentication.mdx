@@ -1,0 +1,277 @@
+---
+title: Authentication
+description: Learn how to authenticate with the OrgStack API using JWT bearer tokens
+---
+
+## Overview
+
+The OrgStack API uses JSON Web Tokens (JWT) for authentication. To access protected endpoints, you must include a valid JWT token in the `Authorization` header of your requests.
+
+<Info>
+  JWT tokens have an expiration time. When your token expires, you'll need to obtain a new one by logging in again.
+</Info>
+
+## Authentication flow
+
+Follow these steps to authenticate and make authorized API requests:
+
+<Steps>
+  <Step title="Obtain credentials">
+    Ensure you have valid user credentials (username/email and password) for the OrgStack system.
+  </Step>
+  
+  <Step title="Request a token">
+    Send a POST request to the `/api/auth/login` endpoint with your credentials.
+  </Step>
+  
+  <Step title="Store the token">
+    Save the JWT token returned in the response securely in your application.
+  </Step>
+  
+  <Step title="Use the token">
+    Include the token in the `Authorization` header as a Bearer token for all subsequent requests.
+  </Step>
+</Steps>
+
+## Obtaining a JWT token
+
+To obtain a JWT token, send a POST request to the login endpoint with your credentials.
+
+### Endpoint
+
+```
+POST /api/auth/login
+```
+
+### Request body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `username` | string | Yes | Your username or email address |
+| `password` | string | Yes | Your account password |
+
+### Example request
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin@example.com",
+    "password": "securepassword"
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('http://localhost:8080/api/auth/login', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    username: 'admin@example.com',
+    password: 'securepassword',
+  }),
+});
+
+const data = await response.json();
+const token = data.token;
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'http://localhost:8080/api/auth/login',
+    json={
+        'username': 'admin@example.com',
+        'password': 'securepassword'
+    }
+)
+
+data = response.json()
+token = data['token']
+```
+
+```java Java
+HttpClient client = HttpClient.newHttpClient();
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("http://localhost:8080/api/auth/login"))
+    .header("Content-Type", "application/json")
+    .POST(HttpRequest.BodyPublishers.ofString(
+        "{\"username\":\"admin@example.com\",\"password\":\"securepassword\"}"
+    ))
+    .build();
+
+HttpResponse<String> response = client.send(request, 
+    HttpResponse.BodyHandlers.ofString());
+```
+
+</CodeGroup>
+
+### Success response
+
+**Status Code:** `200 OK`
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+  "userId": "123e4567-e89b-12d3-a456-426614174000",
+  "username": "admin@example.com",
+  "expiresIn": 86400
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `token` | string | The JWT token to use for authentication |
+| `userId` | string | The unique identifier of the authenticated user |
+| `username` | string | The username of the authenticated user |
+| `expiresIn` | integer | Token expiration time in seconds |
+
+### Error responses
+
+**Status Code:** `401 Unauthorized`
+
+```json
+{
+  "error": "Unauthorized",
+  "message": "Invalid username or password",
+  "timestamp": "2026-03-01T10:30:00Z"
+}
+```
+
+**Status Code:** `400 Bad Request`
+
+```json
+{
+  "error": "Bad Request",
+  "message": "Username and password are required",
+  "timestamp": "2026-03-01T10:30:00Z"
+}
+```
+
+<Warning>
+  Never share your JWT token or include it in client-side code that could be publicly accessible. Treat tokens like passwords.
+</Warning>
+
+## Using JWT tokens
+
+Once you have a JWT token, include it in the `Authorization` header of your requests using the Bearer authentication scheme.
+
+### Header format
+
+```
+Authorization: Bearer YOUR_JWT_TOKEN
+```
+
+### Example authenticated request
+
+<CodeGroup>
+
+```bash cURL
+curl -X GET http://localhost:8080/api/organizations \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```javascript JavaScript
+const response = await fetch('http://localhost:8080/api/organizations', {
+  headers: {
+    'Authorization': `Bearer ${token}`,
+  },
+});
+
+const organizations = await response.json();
+```
+
+```python Python
+import requests
+
+headers = {
+    'Authorization': f'Bearer {token}'
+}
+
+response = requests.get(
+    'http://localhost:8080/api/organizations',
+    headers=headers
+)
+
+organizations = response.json()
+```
+
+```java Java
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("http://localhost:8080/api/organizations"))
+    .header("Authorization", "Bearer " + token)
+    .GET()
+    .build();
+
+HttpResponse<String> response = client.send(request,
+    HttpResponse.BodyHandlers.ofString());
+```
+
+</CodeGroup>
+
+## Token expiration
+
+JWT tokens expire after a set period (typically 24 hours). When your token expires, API requests will return a `401 Unauthorized` response.
+
+### Handling expired tokens
+
+When you receive a `401` error due to an expired token:
+
+1. Request a new token by calling `/api/auth/login` again
+2. Update your stored token with the new one
+3. Retry the failed request with the new token
+
+<Note>
+  Implement automatic token refresh logic in your application to handle expiration gracefully without requiring user intervention.
+</Note>
+
+## Security best practices
+
+Follow these security best practices when working with JWT tokens:
+
+<Steps>
+  <Step title="Use HTTPS in production">
+    Always use HTTPS to encrypt tokens in transit. The localhost URL shown in examples is for development only.
+  </Step>
+  
+  <Step title="Store tokens securely">
+    Store tokens in secure storage mechanisms appropriate for your platform (e.g., encrypted storage, secure cookies, environment variables).
+  </Step>
+  
+  <Step title="Don't expose tokens">
+    Never log tokens, commit them to version control, or expose them in client-side code.
+  </Step>
+  
+  <Step title="Implement token refresh">
+    Build automatic token refresh logic to handle expiration without user disruption.
+  </Step>
+  
+  <Step title="Handle logout">
+    Clear stored tokens when users log out to prevent unauthorized access.
+  </Step>
+</Steps>
+
+## Common authentication errors
+
+| Status Code | Error | Solution |
+|-------------|-------|----------|
+| `401` | Invalid username or password | Verify your credentials are correct |
+| `401` | Invalid or expired token | Request a new token by logging in again |
+| `401` | Missing authorization header | Include the `Authorization` header with your token |
+| `403` | Insufficient permissions | Your account lacks permission for this operation |
+
+<Warning>
+  If you receive multiple `401` errors with valid credentials, your account may be locked or disabled. Contact your administrator.
+</Warning>
+
+## Next steps
+
+Now that you understand authentication, you can:
+
+- Explore available API endpoints in the documentation
+- Build your integration using authenticated requests
+- Implement error handling for authentication failures

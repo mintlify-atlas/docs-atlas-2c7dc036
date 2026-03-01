@@ -1,0 +1,295 @@
+---
+title: Development environment setup
+description: Set up your local development environment for OrgStack with Java 25, Maven, PostgreSQL, and Angular
+---
+
+This guide walks you through setting up a complete development environment for OrgStack, a multi-tenant organization management platform.
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed on your system:
+
+<Steps>
+  <Step title="Install Java 25">
+    OrgStack requires Java 25. Download and install the JDK from [Oracle](https://www.oracle.com/java/technologies/downloads/) or use [SDKMAN](https://sdkman.io/):
+
+    ```bash
+    # Using SDKMAN
+    sdk install java 25-open
+    sdk use java 25-open
+    ```
+
+    Verify your installation:
+
+    ```bash
+    java -version
+    ```
+
+    <Note>
+      The project is configured to use Java 25 in `pom.xml`. Using a different version may cause compatibility issues.
+    </Note>
+  </Step>
+
+  <Step title="Install Apache Maven">
+    Maven is used for dependency management and building the backend. Download Maven from the [official website](https://maven.apache.org/download.cgi) or use a package manager:
+
+    ```bash
+    # macOS
+    brew install maven
+
+    # Ubuntu/Debian
+    sudo apt-get install maven
+    ```
+
+    Verify the installation:
+
+    ```bash
+    mvn -version
+    ```
+  </Step>
+
+  <Step title="Install Docker and Docker Compose">
+    Docker is used to run PostgreSQL locally. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) for your operating system.
+
+    Verify Docker is running:
+
+    ```bash
+    docker --version
+    docker compose version
+    ```
+  </Step>
+
+  <Step title="Install Node.js (for Angular)">
+    The frontend is built with Angular and requires Node.js. Install Node.js 18 or later from [nodejs.org](https://nodejs.org/) or use nvm:
+
+    ```bash
+    # Using nvm
+    nvm install 18
+    nvm use 18
+    ```
+
+    Verify the installation:
+
+    ```bash
+    node -version
+    npm -version
+    ```
+  </Step>
+</Steps>
+
+## Clone the repository
+
+Clone the OrgStack repository to your local machine:
+
+```bash
+git clone <repository-url>
+cd orgstack
+```
+
+## Set up the database
+
+OrgStack uses PostgreSQL 16 as its primary database. The project includes a Docker Compose configuration for easy setup.
+
+<Steps>
+  <Step title="Start PostgreSQL with Docker Compose">
+    The `docker-compose.yml` file configures a PostgreSQL container with the necessary credentials:
+
+    ```yaml docker-compose.yml
+    services:
+      postgres:
+        image: postgres:16
+        container_name: orgstack-postgres
+        restart: unless-stopped
+        environment:
+          POSTGRES_DB: orgstack
+          POSTGRES_USER: orgstack
+          POSTGRES_PASSWORD: orgstack_dev_password
+        ports:
+          - "5432:5432"
+        volumes:
+          - orgstack_pg_data:/var/lib/postgresql/data
+    volumes:
+      orgstack_pg_data:
+    ```
+
+    Start the database:
+
+    ```bash
+    docker compose up -d
+    ```
+
+    <Info>
+      The `-d` flag runs the container in detached mode (in the background).
+    </Info>
+  </Step>
+
+  <Step title="Verify the database is running">
+    Check that the PostgreSQL container is running:
+
+    ```bash
+    docker ps
+    ```
+
+    You should see `orgstack-postgres` in the list of running containers.
+
+    You can also connect to the database to verify:
+
+    ```bash
+    docker exec -it orgstack-postgres psql -U orgstack -d orgstack
+    ```
+
+    Type `\q` to exit the PostgreSQL prompt.
+  </Step>
+</Steps>
+
+<Warning>
+  The default password `orgstack_dev_password` is for development only. Never use this password in production environments.
+</Warning>
+
+## Build and run the backend
+
+With the database running, you can now build and start the Spring Boot backend.
+
+<Steps>
+  <Step title="Navigate to the backend directory">
+    ```bash
+    cd backend
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Maven will download all required dependencies specified in `pom.xml`:
+
+    ```bash
+    mvn clean install
+    ```
+
+    This command:
+    - Cleans any previous build artifacts
+    - Downloads dependencies (Spring Boot 4.0.3, PostgreSQL driver, Lombok, etc.)
+    - Compiles the Java code
+    - Runs tests
+    - Packages the application
+  </Step>
+
+  <Step title="Run the application">
+    Start the Spring Boot application:
+
+    ```bash
+    mvn spring-boot:run
+    ```
+
+    The backend will start on port 8080. You should see output indicating the application has started successfully:
+
+    ```
+    Started BackendApplication in X.XXX seconds
+    ```
+  </Step>
+
+  <Step title="Verify the backend is running">
+    Test the application by accessing the actuator health endpoint:
+
+    ```bash
+    curl http://localhost:8080/actuator/health
+    ```
+
+    You should receive a response like:
+
+    ```json
+    {"status":"UP"}
+    ```
+  </Step>
+</Steps>
+
+## Set up the frontend
+
+The OrgStack frontend is built with Angular and uses Spartan NG components.
+
+<Steps>
+  <Step title="Navigate to the frontend directory">
+    ```bash
+    cd frontend
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all npm packages:
+
+    ```bash
+    npm install
+    ```
+  </Step>
+
+  <Step title="Run the development server">
+    Start the Angular development server:
+
+    ```bash
+    npm start
+    ```
+
+    The frontend will typically run on `http://localhost:4200` and will automatically reload when you make changes to the source files.
+  </Step>
+</Steps>
+
+## Development workflow
+
+With everything set up, your typical development workflow will be:
+
+<Accordion title="Start all services">
+  ```bash
+  # Terminal 1: Database
+  docker compose up
+
+  # Terminal 2: Backend
+  cd backend
+  mvn spring-boot:run
+
+  # Terminal 3: Frontend
+  cd frontend
+  npm start
+  ```
+</Accordion>
+
+<Accordion title="Stop all services">
+  ```bash
+  # Stop frontend and backend: Ctrl+C in their terminals
+
+  # Stop database
+  docker compose down
+  ```
+</Accordion>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port already in use">
+    If port 8080 or 5432 is already in use, you'll need to either:
+    - Stop the conflicting service
+    - Change the port in `application.properties` (backend) or `docker-compose.yml` (database)
+  </Accordion>
+
+  <Accordion title="Database connection errors">
+    Ensure:
+    - PostgreSQL container is running: `docker ps`
+    - Database credentials in `application.properties` match `docker-compose.yml`
+    - Port 5432 is accessible and not blocked by a firewall
+  </Accordion>
+
+  <Accordion title="Maven build failures">
+    Try:
+    - Clearing Maven cache: `mvn clean`
+    - Updating dependencies: `mvn clean install -U`
+    - Verifying Java version: `java -version` (should be 25)
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Learn how to configure database connections, server settings, and JPA properties
+  </Card>
+  <Card title="Data model" icon="database" href="/guides/data-model">
+    Understand the entity structure and BaseEntity pattern
+  </Card>
+</CardGroup>

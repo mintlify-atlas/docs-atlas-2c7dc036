@@ -1,0 +1,169 @@
+---
+title: "Welcome to OrgStack"
+description: "A multi-tenant organization management platform built with Spring Boot and Angular, designed for strict tenant isolation and enterprise-grade security."
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="OrgStack hero"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="OrgStack hero"
+/>
+
+## What is OrgStack?
+
+OrgStack is a production-ready multi-tenant organization management platform that provides the foundation for building secure, scalable SaaS applications. Built with Spring Boot and Angular, it implements enterprise patterns for tenant isolation, authentication, and authorization out of the box.
+
+<CardGroup cols={2}>
+  <Card title="Multi-tenant by design" icon="building">
+    Built from the ground up with strict tenant isolation to ensure data security across organizations.
+  </Card>
+  <Card title="Enterprise security" icon="shield-halved">
+    JWT-based authentication with Spring Security and role-based access control (RBAC).
+  </Card>
+  <Card title="Clean architecture" icon="layer-group">
+    Well-structured layered architecture following Spring Boot best practices.
+  </Card>
+  <Card title="Production ready" icon="rocket">
+    Includes audit logging, timestamping, and Docker Compose configuration for easy deployment.
+  </Card>
+</CardGroup>
+
+## Get started
+
+<Steps>
+  <Step title="Start with the quickstart">
+    Follow our [quickstart guide](/quickstart) to get OrgStack running locally in minutes.
+  </Step>
+  <Step title="Understand core concepts">
+    Learn about [multi-tenancy](/concepts/multi-tenancy), [authentication](/concepts/authentication), and [authorization](/concepts/authorization).
+  </Step>
+  <Step title="Explore the architecture">
+    Dive into the [architecture guide](/concepts/architecture) to understand how OrgStack is structured.
+  </Step>
+</Steps>
+
+## Key features
+
+### Strict tenant isolation
+
+OrgStack ensures complete data separation between organizations. Every entity is scoped to a tenant, preventing cross-tenant data leaks.
+
+```java BaseEntity.java
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+@Getter
+public class BaseEntity {
+    @Column(nullable = false, updatable = false)
+    private UUID id;
+    
+    @CreatedDate
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+    
+    @LastModifiedDate
+    @Column(nullable = false)
+    private Instant updatedAt;
+
+    protected BaseEntity() {
+        this.id = UUID.randomUUID();
+    }
+}
+```
+
+### Role-based access control
+
+Fine-grained permissions system that allows you to control what users can do within their organization.
+
+### JWT authentication
+
+Secure, stateless authentication using JSON Web Tokens, integrated with Spring Security.
+
+### Audit logging
+
+Automatic tracking of creation and modification timestamps on all entities using JPA auditing.
+
+```java JpaConfig.java
+@Configuration
+@EnableJpaAuditing
+public class JpaConfig {
+}
+```
+
+## Technology stack
+
+<Columns cols={2}>
+  <Card title="Backend" icon="server">
+    **Spring Boot 4.0.3** with Spring Security, Spring Data JPA, and PostgreSQL
+  </Card>
+  <Card title="Frontend" icon="browser">
+    **Angular** with Spartan NG component library
+  </Card>
+</Columns>
+
+### Backend technologies
+
+- **Java 25** - Modern Java features and performance
+- **Spring Boot 4.0.3** - Latest Spring framework
+- **Spring Security** - Enterprise-grade security
+- **Spring Data JPA** - Database abstraction with Hibernate
+- **PostgreSQL 16** - Reliable relational database
+- **Maven** - Dependency management
+- **Lombok** - Reduce boilerplate code
+
+### Frontend technologies
+
+- **Angular** - Modern TypeScript framework
+- **Spartan NG** - UI component library
+- **TypeScript** - Type-safe development
+
+## Use cases
+
+OrgStack is perfect for building:
+
+- **SaaS platforms** that need multi-tenant support
+- **B2B applications** with organization-based access
+- **Enterprise tools** requiring strict data isolation
+- **Customer portals** with role-based permissions
+- **Team collaboration tools** with audit trails
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get OrgStack running locally in under 5 minutes
+  </Card>
+  <Card
+    title="Multi-tenancy concepts"
+    icon="building"
+    href="/concepts/multi-tenancy"
+  >
+    Learn how OrgStack implements tenant isolation
+  </Card>
+  <Card
+    title="Architecture overview"
+    icon="diagram-project"
+    href="/concepts/architecture"
+  >
+    Understand the layered architecture and design patterns
+  </Card>
+  <Card
+    title="Development guide"
+    icon="code"
+    href="/guides/setup"
+  >
+    Set up your development environment and start building
+  </Card>
+</CardGroup>
+
+<Note>
+  OrgStack is in active development. Star the [GitHub repository](https://github.com/louayhouimli/orgstack) to stay updated on new features and releases.
+</Note>

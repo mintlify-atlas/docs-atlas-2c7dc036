@@ -1,0 +1,157 @@
+---
+title: Introduction
+description: Get started with the OrgStack API to build powerful multi-tenant organization management integrations
+---
+
+## Overview
+
+The OrgStack API is a RESTful API that enables you to programmatically manage organizations, users, roles, and permissions in a multi-tenant environment. The API follows standard REST conventions and returns JSON-encoded responses.
+
+<Info>
+  All API requests require authentication using JWT bearer tokens. Learn more in the [Authentication](/api/authentication) guide.
+</Info>
+
+## Base URL
+
+All API endpoints are relative to the base URL:
+
+```
+http://localhost:8080/api
+```
+
+For example, to access the login endpoint, you would make a request to:
+
+```
+http://localhost:8080/api/auth/login
+```
+
+## API versioning
+
+The OrgStack API currently uses URL-based versioning. The base URL includes the API version path segment. Future versions will be introduced as needed to maintain backward compatibility.
+
+## Request format
+
+All requests that send data in the request body must use JSON format and include the appropriate `Content-Type` header:
+
+```bash
+Content-Type: application/json
+```
+
+### Example request
+
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin@example.com",
+    "password": "securepassword"
+  }'
+```
+
+## Response format
+
+All API responses are returned in JSON format. Successful responses include the requested data, while error responses include details about what went wrong.
+
+### Success response example
+
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "name": "Acme Corporation",
+  "status": "active"
+}
+```
+
+### Error response example
+
+```json
+{
+  "error": "Unauthorized",
+  "message": "Invalid or expired token",
+  "timestamp": "2026-03-01T10:30:00Z"
+}
+```
+
+## HTTP status codes
+
+The OrgStack API uses standard HTTP status codes to indicate the success or failure of requests:
+
+| Status Code | Description |
+|-------------|-------------|
+| `200` | **OK** - Request succeeded |
+| `201` | **Created** - Resource created successfully |
+| `400` | **Bad Request** - Invalid request parameters or body |
+| `401` | **Unauthorized** - Missing or invalid authentication token |
+| `403` | **Forbidden** - Authenticated but lacking permission |
+| `404` | **Not Found** - Resource does not exist |
+| `500` | **Internal Server Error** - Server encountered an error |
+
+<Note>
+  When you receive a `4xx` error, check the response body for detailed error messages to help troubleshoot the issue.
+</Note>
+
+## Common patterns
+
+### Pagination
+
+List endpoints support pagination using `page` and `size` query parameters:
+
+```bash
+GET /api/organizations?page=0&size=20
+```
+
+Paginated responses include metadata about the total number of items and pages:
+
+```json
+{
+  "content": [...],
+  "page": 0,
+  "size": 20,
+  "totalElements": 100,
+  "totalPages": 5
+}
+```
+
+### Filtering and sorting
+
+Many endpoints support filtering and sorting through query parameters:
+
+```bash
+GET /api/users?status=active&sort=createdAt,desc
+```
+
+### Multi-tenancy
+
+OrgStack is built for multi-tenant environments. Your authentication token determines which organization context you're operating in. Some endpoints may require you to specify an organization ID explicitly.
+
+<Warning>
+  Always ensure you're operating in the correct organization context to avoid accessing or modifying data for the wrong tenant.
+</Warning>
+
+## Rate limiting
+
+To ensure fair usage and API stability, rate limiting may be applied to API requests. If you exceed the rate limit, you'll receive a `429 Too Many Requests` response.
+
+## Getting help
+
+If you encounter issues or have questions about the API:
+
+- Check the specific endpoint documentation for detailed information
+- Review the [Authentication](/api/authentication) guide for token-related issues
+- Inspect error response messages for troubleshooting guidance
+
+## Next steps
+
+<Steps>
+  <Step title="Authenticate">
+    Learn how to obtain and use JWT tokens in the [Authentication](/api/authentication) guide.
+  </Step>
+  
+  <Step title="Explore endpoints">
+    Browse the available API endpoints to understand what operations you can perform.
+  </Step>
+  
+  <Step title="Build your integration">
+    Start making API calls to integrate OrgStack into your application.
+  </Step>
+</Steps>
